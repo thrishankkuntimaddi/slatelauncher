@@ -3,7 +3,7 @@ package app.slate.data
 import android.content.Context
 import android.content.pm.ApplicationInfo
 
-/** App Library categories — the same sorting rules NoLauncher uses, tuned on real phones. */
+/** App Library categories — keyword, package and Play-category rules. */
 object Categories {
     private class Rule(
         val name: String,
