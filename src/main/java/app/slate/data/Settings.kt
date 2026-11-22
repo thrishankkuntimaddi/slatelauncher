@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class IconStyle { Colour, Mono }
+enum class WidgetStyle(val label: String) { Frosted("Frosted"), Dark("Dark"), Clear("Clear") }
 /** Landscape grid; portrait swaps rows and columns, so pages hold the same apps either way. */
 /**
  * Landscape grid (portrait swaps rows/columns, so a page holds the same apps either way).
@@ -24,7 +25,10 @@ data class Prefs(
     val density: Density = Density.Standard,
     val dim: Int = 15,              // wallpaper dimming, percent
     val widgetsOnHome: Boolean = true,
-    val dockRecents: Boolean = false,
+    val dockRecents: Boolean = true,
+    /** Seconds before the widget stack moves on to the next widget by itself; 0 = never. */
+    val widgetRotate: Int = 10,
+    val widgetStyle: WidgetStyle = WidgetStyle.Frosted,
     val hidden: Set<String> = emptySet(),
     /** Multiplies icon size: 0.75 smaller … 1.15 large. */
     val iconScale: Float = 0.85f,
@@ -40,7 +44,9 @@ class Settings(context: Context) {
             density = runCatching { Density.valueOf(sp.getString("density2", null)!!) }.getOrDefault(Density.Standard),
             dim = sp.getInt("dim", 15),
             widgetsOnHome = sp.getBoolean("widgets", true),
-            dockRecents = sp.getBoolean("dock_recents2", false),
+            dockRecents = sp.getBoolean("dock_recents3", true),
+            widgetRotate = sp.getInt("widget_rotate", 10),
+            widgetStyle = runCatching { WidgetStyle.valueOf(sp.getString("widget_style", null)!!) }.getOrDefault(WidgetStyle.Frosted),
             hidden = sp.getStringSet("hidden", emptySet()).orEmpty().toSet(),
             iconScale = sp.getFloat("icon_scale", 0.85f),
         )
@@ -56,7 +62,9 @@ class Settings(context: Context) {
             putString("density2", p.density.name)
             putInt("dim", p.dim)
             putBoolean("widgets", p.widgetsOnHome)
-            putBoolean("dock_recents2", p.dockRecents)
+            putBoolean("dock_recents3", p.dockRecents)
+            putInt("widget_rotate", p.widgetRotate)
+            putString("widget_style", p.widgetStyle.name)
             putStringSet("hidden", p.hidden)
             putFloat("icon_scale", p.iconScale)
         }

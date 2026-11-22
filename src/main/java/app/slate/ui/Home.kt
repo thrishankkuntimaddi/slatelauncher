@@ -41,6 +41,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -108,6 +111,7 @@ interface Actions {
     fun openSettings()
     fun openSearch()
     fun openWidgets()
+    fun openRecents()
     fun toast(s: String)
 }
 
@@ -255,12 +259,15 @@ private class HomeController(
         val items = pages[p].items
         val target = items.getOrNull(idx)
         val dragId = (c as? Src.Home)?.id
-        // Near the centre of another icon → it may become a folder.
+        // Over another icon → drop into it (folders take a bigger target than apps).
         val r = cellRect(g, idx)
-        val nearCentre = hypot(pos.x - r.center.x, pos.y - r.center.y) < minOf(g.cellW, g.cellH) * 0.28f
+        val dist = hypot(pos.x - r.center.x, pos.y - r.center.y)
+        val reach = minOf(g.cellW, g.cellH) * (if (target is Item.Folder) 0.46f else 0.32f)
         val draggedIsApp = c is Src.Dock || (dragId != null && slate.home.find(dragId) is Item.AppItem)
-        mergeCandidate = if (target != null && target.id != dragId && nearCentre && draggedIsApp) target.id else null
+        mergeCandidate = if (target != null && target.id != dragId && dist < reach && draggedIsApp) target.id else null
         if (mergeCandidate != null || c !is Src.Home) return
+        // Inside an icon but not close enough to merge: hold position instead of shuffling it away.
+        if (target != null && target.id != dragId && dist < minOf(g.cellW, g.cellH) * 0.5f) return
         // Otherwise, make room: move the dragged icon to the hovered slot.
         val to = idx.coerceAtMost(if (slate.home.locate(c.id)?.first == p) items.size - 1 else items.size)
         if (lastHover == p to to) return
@@ -293,7 +300,8 @@ private class HomeController(
         dragging = false
         edge = 0
         lastHover = null
-        val merge = folderTarget
+        // Dropping straight onto a folder counts right away; making a new folder needs a short hover.
+        val merge = folderTarget ?: mergeCandidate?.takeIf { slate.home.find(it) is Item.Folder }
         mergeCandidate = null
         folderTarget = null
         val toDock = overDock
@@ -329,6 +337,13 @@ private class HomeController(
             }
         }
         slate.home.compact()
+    }
+
+    /** Put loose apps into category folders where a category has more than three apps. */
+    fun organize() {
+        val byKey = slate.apps.apps.value.associateBy { it.key }
+        val made = slate.home.organize({ k -> byKey[k]?.let { Categories.of(context, it) }?.takeIf { it != Categories.OTHER } }, cap)
+        actions.toast(if (made == 0) "Already organised — no category has more than 3 loose apps" else "Organised into $made folder${if (made == 1) "" else "s"}")
     }
 
     private fun dockIndex(pos: Offset): Int =
@@ -370,7 +385,17 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
     }
     LaunchedEffect(ctl.mergeCandidate) {
         ctl.folderTarget = null
-        if (ctl.mergeCandidate != null) { delay(350); ctl.folderTarget = ctl.mergeCandidate }
+        val m = ctl.mergeCandidate ?: return@LaunchedEffect
+        delay(if (slate.home.find(m) is Item.Folder) 120 else 300)
+        ctl.folderTarget = m
+    }
+    // Keyboard closed (back, or the hide key): drop the text cursor too, so nothing reopens it.
+    val focusManager = LocalFocusManager.current
+    val imeOpen = WindowInsets.ime.getBottom(density) > 0
+    var hadIme by remember { mutableStateOf(false) }
+    LaunchedEffect(imeOpen) {
+        if (hadIme && !imeOpen) focusManager.clearFocus(force = true)
+        hadIme = imeOpen
     }
     BackHandler(enabled = ctl.editMode || ctl.menu != null || ctl.sheetOpen) {
         when {
@@ -446,7 +471,7 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
                 .then(if (sink < 1f) Modifier.graphicsLayer { scaleX = sink; scaleY = sink } else Modifier)
                 .then(if (blur > 0.dp) Modifier.blur(blur) else Modifier),
         ) {
-            EditBar(ctl.editMode, actions, onDone = { ctl.editMode = false })
+            EditBar(ctl.editMode, actions, onOrganize = { ctl.organize() }, onDone = { ctl.editMode = false })
             HorizontalPager(
                 state = pager,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -466,7 +491,7 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
             PageDots(pages.size + 1, pager.currentPage)
             Dock(
                 favorites = dockKeys.mapNotNull { byKey[it] },
-                recents = if (prefs.dockRecents) recents.filter { it !in dockKeys }.mapNotNull { byKey[it] }.take(3) else emptyList(),
+                recents = if (prefs.dockRecents) recents.filter { it !in dockKeys }.mapNotNull { byKey[it] }.take(4) else emptyList(),
                 ctl = ctl,
                 draggingKey = (ctl.candidate as? Src.Dock)?.key?.takeIf { ctl.dragging },
                 iconSize = (54 * prefs.iconScale).dp,
@@ -527,12 +552,13 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
 }
 
 @Composable
-private fun EditBar(edit: Boolean, actions: Actions, onDone: () -> Unit) {
+private fun EditBar(edit: Boolean, actions: Actions, onOrganize: () -> Unit, onDone: () -> Unit) {
     // Always the same height, so nothing on the page moves when edit mode starts (e.g. mid-drag).
     Box(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 28.dp)) {
         if (edit) {
             Row(Modifier.align(Alignment.CenterStart), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Chip("+  Widgets") { actions.openWidgets() }
+                Chip("Smart organize") { onOrganize() }
                 Chip("Settings") { actions.openSettings() }
             }
             Chip("Done", Modifier.align(Alignment.CenterEnd), strong = true, onClick = onDone)
@@ -541,14 +567,14 @@ private fun EditBar(edit: Boolean, actions: Actions, onDone: () -> Unit) {
 }
 
 @Composable
-fun Chip(text: String, modifier: Modifier = Modifier, strong: Boolean = false, onClick: () -> Unit) {
+fun Chip(text: String, modifier: Modifier = Modifier, strong: Boolean = false, compact: Boolean = false, onClick: () -> Unit) {
     Txt(
-        text, size = 15.sp, weight = FontWeight.SemiBold,
+        text, size = if (compact) 13.sp else 15.sp, weight = FontWeight.SemiBold, maxLines = 1,
         color = if (strong) Color.Black else Slate.Ink,
         modifier = modifier
             .glass(RoundedCornerShape(50), if (strong) Slate.Ink else Slate.GlassLight)
             .press(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 9.dp),
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 6.dp else 9.dp),
     )
 }
 
@@ -575,15 +601,15 @@ private fun HomePage(
         val cellH = maxHeight / baseRows
         val icon = iconFor(cellW, cellH, iconDp, labels)
         val block = icon + if (labels) LABEL_BLOCK else 0.dp
-        val hInset = (cellW - icon) / 2
         val vInset = ((cellH - block) / 2).coerceAtLeast(0.dp)
         val m = WidgetMetrics(unit = cellH, block = block, gap = cellH - block, hGap = cellW - icon)
         if (withWidgets) {
             if (landscape) {
                 Row(Modifier.fillMaxSize()) {
+                    // Widgets use their whole span; the icons' own cell padding is the gutter.
                     WidgetStack(
                         slate, actions, ctl.editMode, m,
-                        Modifier.width(cellW * widgetSpan).fillMaxHeight().padding(start = hInset, end = hInset, top = vInset),
+                        Modifier.width(cellW * widgetSpan).fillMaxHeight().padding(end = 6.dp, top = vInset),
                     )
                     Grid(p, items, byKey, grid, icon, labels, ctl, Modifier.weight(1f).fillMaxHeight())
                 }
@@ -591,7 +617,7 @@ private fun HomePage(
                 Column(Modifier.fillMaxSize()) {
                     WidgetRow(
                         slate, actions, ctl.editMode, m,
-                        Modifier.height(cellH * widgetSpan).fillMaxWidth().padding(horizontal = hInset, vertical = vInset),
+                        Modifier.height(cellH * widgetSpan).fillMaxWidth().padding(vertical = vInset),
                     )
                     Grid(p, items, byKey, grid, icon, labels, ctl, Modifier.weight(1f).fillMaxWidth())
                 }
@@ -742,15 +768,33 @@ private fun Dock(favorites: List<App>, recents: List<App>, ctl: HomeController, 
                     .clickable(remember { MutableInteractionSource() }, null) { ctl.actions.openSearch() },
                 contentAlignment = Alignment.Center,
             ) { MagnifierGlyph(Slate.Ink, iconSize * 0.4f) }
+            // Recents: the same screen as swipe-up-and-hold.
+            Box(
+                Modifier.size(iconSize).clip(Squircle).background(Color.White.copy(alpha = 0.16f))
+                    .clickable(remember { MutableInteractionSource() }, null) { ctl.actions.openRecents() },
+                contentAlignment = Alignment.Center,
+            ) { RecentsGlyph(Slate.Ink, iconSize * 0.44f) }
             if (favorites.isEmpty() && recents.isEmpty()) {
                 Txt("Drag apps here", color = Slate.Muted, size = 14.sp, modifier = Modifier.padding(horizontal = 40.dp, vertical = 18.dp))
             }
             favorites.forEach { a -> DockIcon(a, true, ctl, a.key == draggingKey, iconSize) }
             if (recents.isNotEmpty()) {
-                Box(Modifier.width(1.dp).height(44.dp).background(Color.White.copy(alpha = 0.25f)))
+                Box(Modifier.width(1.dp).height(iconSize * 0.8f).background(Color.White.copy(alpha = 0.25f)))
                 recents.forEach { a -> DockIcon(a, false, ctl, false, iconSize) }
             }
         }
+    }
+}
+
+/** Two stacked cards: "your open apps". */
+@Composable
+private fun RecentsGlyph(color: Color, size: Dp) {
+    androidx.compose.foundation.Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val st = 1.8.dp.toPx()
+        val r = androidx.compose.ui.geometry.CornerRadius(w * 0.12f)
+        drawRoundRect(color.copy(alpha = 0.55f), Offset(w * 0.30f, 0f), androidx.compose.ui.geometry.Size(w * 0.70f, w * 0.70f), r, style = androidx.compose.ui.graphics.drawscope.Stroke(st))
+        drawRoundRect(color, Offset(0f, w * 0.30f), androidx.compose.ui.geometry.Size(w * 0.70f, w * 0.70f), r, style = androidx.compose.ui.graphics.drawscope.Stroke(st))
     }
 }
 
@@ -860,7 +904,7 @@ private fun AppsSheet(title: String, apps: List<App>, onDismiss: () -> Unit, onO
         ) {
             Txt(title, size = 30.sp, weight = FontWeight.SemiBold, shadow = true, modifier = Modifier.padding(bottom = 18.dp))
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(112.dp),
+                columns = GridCells.Adaptive(100.dp),
                 modifier = Modifier
                     .glass(RoundedCornerShape(36.dp), Color(0xB31C1C22))
                     .border(1.dp, Slate.CardEdge, RoundedCornerShape(36.dp))
@@ -869,9 +913,9 @@ private fun AppsSheet(title: String, apps: List<App>, onDismiss: () -> Unit, onO
             ) {
                 items(apps, key = { it.key }) { a ->
                     LabeledIcon(
-                        a.label, 62.dp, true,
-                        Modifier.padding(vertical = 12.dp).press(onLongClick = { onHold(a) }) { onOpen(a); onDismiss() },
-                    ) { AppIcon(a, 62.dp) }
+                        a.label, 54.dp, true,
+                        Modifier.padding(vertical = 10.dp).press(onLongClick = { onHold(a) }) { onOpen(a); onDismiss() },
+                    ) { AppIcon(a, 54.dp) }
                 }
             }
         }
@@ -944,7 +988,7 @@ private fun FolderSheet(f: Item.Folder, byKey: Map<String, App>, slate: SlateApp
             )
             val apps = f.apps.mapNotNull { byKey[it] }
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(108.dp),
+                columns = GridCells.Adaptive(100.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .glass(RoundedCornerShape(36.dp), Color(0xB31C1C22))
@@ -954,9 +998,9 @@ private fun FolderSheet(f: Item.Folder, byKey: Map<String, App>, slate: SlateApp
             ) {
                 items(apps, key = { it.key }) { a ->
                     LabeledIcon(
-                        a.label, 64.dp, true,
+                        a.label, 56.dp, true,
                         Modifier.padding(vertical = 10.dp).press(onLongClick = { holding = a }) { actions.launch(a, null) },
-                    ) { AppIcon(a, 64.dp) }
+                    ) { AppIcon(a, 56.dp) }
                 }
             }
             holding?.let { a ->

@@ -179,6 +179,47 @@ class HomeStore(context: Context) {
         commit(pages, dropEmpty = true)
     }
 
+    /**
+     * Smart organize: loose apps on the home screen that share a category go into a folder for it,
+     * but only when there are more than [minApps] of them — smaller groups stay as single icons.
+     * An existing folder with the category's name is reused. Existing folders are left alone.
+     * Returns how many folders were made or filled.
+     */
+    fun organize(categoryOf: (String) -> String?, cap: (Int) -> Int, minApps: Int = 3): Int {
+        val pages = mutablePages()
+        val all = pages.flatMap { it.second }
+        val groups = all.filterIsInstance<Item.AppItem>()
+            .groupBy { categoryOf(it.app) }
+            .filter { (name, list) -> name != null && list.size > minApps }
+        if (groups.isEmpty()) return 0
+        val drop = HashSet<String>()
+        val replace = HashMap<String, Item>()
+        groups.forEach { (name, list) ->
+            val keys = list.map { it.app }
+            val existing = all.firstOrNull { it is Item.Folder && it.name.equals(name, ignoreCase = true) } as? Item.Folder
+            if (existing != null) {
+                replace[existing.id] = (replace[existing.id] as? Item.Folder ?: existing).let { f -> f.copy(apps = f.apps + keys.filter { it !in f.apps }) }
+                drop += list.map { it.id }
+            } else {
+                // The folder takes the place of the group's first app.
+                replace[list.first().id] = Item.Folder(newId(), name!!, keys)
+                drop += list.drop(1).map { it.id }
+            }
+        }
+        val flat = all.filter { it.id !in drop }.map { replace[it.id] ?: it }
+        // Re-pack so pages fill up again after the apps moved into folders.
+        val ids = pages.map { it.first }
+        val out = mutableListOf<Pair<String, List<Item>>>()
+        var i = 0; var p = 0
+        do {
+            val c = cap(p).coerceAtLeast(1)
+            out += (ids.getOrNull(p) ?: newId()) to flat.subList(i, minOf(flat.size, i + c))
+            i += c; p++
+        } while (i < flat.size)
+        commit(out, dropEmpty = true)
+        return groups.size
+    }
+
     /** Re-chunk everything after the capacity changes (density, widgets toggled). */
     fun reflow(cap: (Int) -> Int) {
         val pages = mutablePages()

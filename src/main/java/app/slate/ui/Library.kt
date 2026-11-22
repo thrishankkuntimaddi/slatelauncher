@@ -81,9 +81,15 @@ fun Library(
     var query by remember { mutableStateOf("") }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val cols = if (landscape) 5 else 3
-        val gap = if (landscape) 34.dp else 30.dp
-        val box = min((maxWidth - 56.dp - gap * (cols - 1)) / cols, if (landscape) 196.dp else 210.dp)
+        // Size the boxes so whole rows fit on screen (3 in landscape, 4 in portrait), then fit as
+        // many columns as the width allows — no half-cut rows, no oversized icons.
+        val rowsShown = if (landscape) 3 else 4
+        val labelH = 30.dp
+        val rowGap = 16.dp
+        val gridH = maxHeight - 68.dp
+        val box = ((gridH - (labelH + rowGap) * rowsShown) / rowsShown).coerceIn(92.dp, 150.dp)
+        val gap = (box * 0.24f).coerceIn(18.dp, 32.dp)
+        val cols = ((maxWidth - 40.dp + gap) / (box + gap)).toInt().coerceAtLeast(3)
         val side = (maxWidth - box * cols - gap * (cols - 1)) / 2
 
         Column(Modifier.fillMaxSize()) {
@@ -93,7 +99,7 @@ fun Library(
                     columns = GridCells.Fixed(cols),
                     contentPadding = PaddingValues(start = side, end = side, bottom = 28.dp),
                     horizontalArrangement = Arrangement.spacedBy(gap),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(rowGap),
                 ) {
                     items(boxes, key = { it.first }) { (title, list) ->
                         CategoryBox(title, list, box, onApp = { actions.launch(it, null) }, onHold = onAppMenu) { onOpenBox(title, list) }
@@ -160,7 +166,7 @@ private fun CategoryBox(title: String, apps: List<App>, box: Dp, onApp: (App) ->
     val pad = box * 0.11f
     val gap = box * 0.08f
     val slot = (box - pad * 2 - gap) / 2
-    val big = slot * 0.92f
+    val big = slot * 0.9f
     val mini = (slot - gap * 0.6f) / 2 * 0.9f
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
@@ -190,8 +196,8 @@ private fun CategoryBox(title: String, apps: List<App>, box: Dp, onApp: (App) ->
             }
         }
         Txt(
-            title, size = 13.sp, weight = FontWeight.SemiBold, shadow = true, maxLines = 1, align = TextAlign.Center,
-            modifier = Modifier.width(box).padding(top = 9.dp).press(onClick = onOpen),
+            title, size = 12.5.sp, weight = FontWeight.Medium, shadow = true, maxLines = 1, align = TextAlign.Center,
+            modifier = Modifier.width(box + 16.dp).padding(top = 7.dp).press(onClick = onOpen),
         )
     }
 }

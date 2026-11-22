@@ -47,13 +47,14 @@ fun SettingsSheet(
     onSystemSettingsAccessibility: () -> Unit,
     onUsageAccess: () -> Unit,
     onResetLayout: () -> Unit,
+    onOrganize: () -> Unit,
     onClose: () -> Unit,
 ) {
     val prefs by slate.settings.prefs.collectAsState()
     val apps by slate.apps.apps.collectAsState()
     var section by remember { mutableStateOf("Appearance") }
     BackHandler { onClose() }
-    val sections = listOf("Appearance", "Home Screen", "Hidden Apps", "System")
+    val sections = listOf("Appearance", "Home Screen", "Widgets", "Hidden Apps", "System")
 
     Box(Modifier.fillMaxSize().background(Color(0xF0121216)).statusBarsPadding()) {
         Row(Modifier.fillMaxSize()) {
@@ -121,10 +122,32 @@ fun SettingsSheet(
                                 Toggle("Widgets on the first page", prefs.widgetsOnHome) { v -> slate.settings.update { it.copy(widgetsOnHome = v) } }
                                 Toggle("Recently used apps in the dock", prefs.dockRecents) { v -> slate.settings.update { it.copy(dockRecents = v) } }
                                 Txt(
-                                    "Shows the apps you used last. Android doesn't let launchers see which apps are still open, so these don't disappear when you clear Recents.",
+                                    "Your last few apps, after the line in the dock. Android doesn't tell launchers when you clear an app from Recents, so they stay until something newer replaces them.",
                                     color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
                                 )
+                                Action("Smart organize — folders for categories with more than 3 apps", onOrganize)
                                 Action("Rebuild home screen from my apps", onResetLayout)
+                            }
+                        }
+                        "Widgets" -> {
+                            Group("Stack scrolls by itself") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                    listOf(0 to "Off", 6 to "6 s", 10 to "10 s", 20 to "20 s", 45 to "45 s").forEach { (v, name) ->
+                                        Chip(name, strong = prefs.widgetRotate == v) { slate.settings.update { it.copy(widgetRotate = v) } }
+                                    }
+                                }
+                                Txt(
+                                    "Moves to the next widget after this long. It waits while you're touching or typing in a widget.",
+                                    color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                                )
+                            }
+                            Group("Look") {
+                                app.slate.data.WidgetStyle.entries.forEach { st ->
+                                    Choice(st.label, prefs.widgetStyle == st) { slate.settings.update { it.copy(widgetStyle = st) } }
+                                }
+                            }
+                            Group(null) {
+                                Toggle("Widgets on the first page", prefs.widgetsOnHome) { v -> slate.settings.update { it.copy(widgetsOnHome = v) } }
                             }
                         }
                         "Hidden Apps" -> {
@@ -150,7 +173,7 @@ fun SettingsSheet(
                                 if (!isDefault) Action("Make Slate your home screen", onMakeDefault)
                                 else Txt("Slate is your home screen", color = Slate.Muted, size = 16.sp, modifier = Modifier.padding(16.dp))
                                 if (app.slate.service.GestureService.isEnabled(androidx.compose.ui.platform.LocalContext.current)) {
-                                    Txt("Slate gestures are on — swipe up for Home, hold for Recents, swipe from a side for Back", color = Slate.Muted, size = 15.sp, modifier = Modifier.padding(16.dp))
+                                    Txt("Slate gestures are on — swipe up for Home, swipe up and pause for Recents, swipe in from a side for Back", color = Slate.Muted, size = 15.sp, modifier = Modifier.padding(16.dp))
                                 } else {
                                     Action("Turn on Slate gestures (Accessibility → Slate gestures)", onSystemSettingsAccessibility)
                                 }

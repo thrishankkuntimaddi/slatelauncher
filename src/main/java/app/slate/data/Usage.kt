@@ -49,11 +49,17 @@ class Usage(context: Context) {
             "com.miui.securitycenter", "com.miui.cleanmaster", "com.miui.cleaner", "com.miui.securityadd",
             "com.google.android.packageinstaller", "com.android.packageinstaller", "com.lbe.security.miui",
         )
-        val keys = order.entries.sortedByDescending { it.value }.map { it.key }
-            .filter { it !in skip }
+        // Only apps still open: on the Recents screen when we last saw it, or opened since.
+        val open = app.slate.service.OpenTasks.read(context)
+        val keys = order.entries.sortedByDescending { it.value }
+            .filter { it.key !in skip }
+            .filter { (pkg, at) ->
+                open == null || at > open.at || byPkg[pkg].orEmpty().any { it.label.lowercase() in open.labels }
+            }
+            .map { it.key }
             .mapNotNull { byPkg[it]?.firstOrNull()?.key }
             .distinct().take(12)
-        if (keys.isNotEmpty() && keys != _recents.value) synchronized(this) {
+        if (keys != _recents.value) synchronized(this) {
             _recents.value = keys
             sp.edit { putString("recents", keys.joinToString("\n")) }
         }

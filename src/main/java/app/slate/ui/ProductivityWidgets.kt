@@ -79,7 +79,7 @@ import java.util.TimeZone
 @Composable
 private fun Title(text: String, accent: Color = Slate.Accent, trailing: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Txt(text.uppercase(), color = accent, size = 12.sp, weight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Txt(text.uppercase(), color = accent, size = WType.title, weight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
         trailing?.invoke()
     }
 }
@@ -126,7 +126,7 @@ fun CalendarWidget() {
     }
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.Bottom) {
-            Txt(SimpleDateFormat("d", Locale.getDefault()).format(Date(now)), size = 40.sp, weight = FontWeight.Light)
+            Txt(SimpleDateFormat("d", Locale.getDefault()).format(Date(now)), size = WType.hero(), weight = FontWeight.Light)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.padding(bottom = 6.dp)) {
                 Txt(SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(now)), color = Slate.Danger, size = 13.sp, weight = FontWeight.SemiBold)
@@ -320,7 +320,7 @@ fun WeatherWidget(slate: SlateApp, id: String) {
             if (cur == null) Txt("Loading…", color = Slate.Muted)
             else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Txt("${cur.optDouble("temperature_2m").toInt()}°", size = 46.sp, weight = FontWeight.Light)
+                    Txt("${cur.optDouble("temperature_2m").toInt()}°", size = WType.hero(), weight = FontWeight.Light)
                     Spacer(Modifier.width(14.dp))
                     Column {
                         Txt(weatherText(cur.optInt("weather_code")), size = 16.sp)
@@ -396,24 +396,39 @@ fun TimerWidget(slate: SlateApp, id: String) {
         TimerReceiver.cancel(context)
     }
 
+    val accent = if (mode == "focus") Color(0xFFFF9F0A) else Color(0xFF30D158)
+    val size = LocalWidgetSize.current
+    val wide = size.width > 300.dp
+    val time = "%d:%02d".format(left / 60_000, (left / 1000) % 60)
+    val progress = (1f - left.toFloat() / total).coerceIn(0f, 1f)
+    // All three controls are always there, so nothing hides off the bottom of a short card.
+    val controls: @Composable () -> Unit = {
+        Chip(if (running) "Pause" else if (pausedLeft >= 0) "Resume" else "Start", strong = true, compact = true) { if (running) pause() else start() }
+        Chip("Reset", compact = true) { reset() }
+        Chip(if (mode == "focus") "Break" else "Focus", compact = true) {
+            TimerReceiver.cancel(context)
+            slate.widgetData.update(id) { it.put("mode", if (mode == "focus") "break" else "focus").put("endAt", 0).put("left", -1) }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
-        Title(if (mode == "focus") "Focus" else "Break", if (mode == "focus") Color(0xFFFF9F0A) else Color(0xFF30D158), trailing = {
-            Link(if (mode == "focus") "$focusMin / $breakMin min" else "Skip") {
-                if (mode == "focus") {
-                    val next = when (focusMin) { 25 -> 50; 50 -> 15; else -> 25 }
-                    slate.widgetData.update(id) { it.put("focus", next).put("break", if (next == 50) 10 else 5).put("left", -1) }
-                } else slate.widgetData.update(id) { it.put("mode", "focus").put("endAt", 0).put("left", -1) }
+        Title(if (mode == "focus") "Focus" else "Break", accent, trailing = {
+            Link("$focusMin / $breakMin min") {
+                val next = when (focusMin) { 25 -> 50; 50 -> 15; else -> 25 }
+                slate.widgetData.update(id) { it.put("focus", next).put("break", if (next == 50) 10 else 5).put("left", -1) }
             }
         })
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Txt("%d:%02d".format(left / 60_000, (left / 1000) % 60), size = 46.sp, weight = FontWeight.Light)
+        if (wide) {
+            Row(Modifier.fillMaxWidth().weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Txt(time, size = WType.hero(), weight = FontWeight.Light, maxLines = 1, modifier = Modifier.weight(1f))
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) { controls() }
+            }
+        } else {
+            Txt(time, size = WType.hero(), weight = FontWeight.Light, maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { controls() }
         }
-        Box(Modifier.fillMaxWidth().padding(vertical = 10.dp).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Slate.GlassLight)) {
-            Box(Modifier.fillMaxWidth((1f - left.toFloat() / total).coerceIn(0f, 1f)).height(6.dp).background(if (mode == "focus") Color(0xFFFF9F0A) else Color(0xFF30D158)))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip(if (running) "Pause" else if (pausedLeft >= 0) "Resume" else "Start", strong = true) { if (running) pause() else start() }
-            if (running || pausedLeft >= 0) Chip("Reset") { reset() }
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Slate.GlassLight)) {
+            Box(Modifier.fillMaxWidth(progress).height(5.dp).clip(RoundedCornerShape(3.dp)).background(accent))
         }
     }
 }
@@ -491,7 +506,7 @@ fun CountdownWidget(slate: SlateApp, id: String) {
         if (date != null) {
             val days = ChronoUnit.DAYS.between(LocalDate.now(), date)
             Row(verticalAlignment = Alignment.Bottom) {
-                Txt(if (days >= 0) "$days" else "${-days}", size = 48.sp, weight = FontWeight.Light)
+                Txt(if (days >= 0) "$days" else "${-days}", size = WType.hero(), weight = FontWeight.Light)
                 Spacer(Modifier.width(8.dp))
                 Txt(if (days == 0L) "today!" else if (days > 0) (if (days == 1L) "day to go" else "days to go") else "days ago", color = Slate.Muted, size = 15.sp, modifier = Modifier.padding(bottom = 10.dp))
             }

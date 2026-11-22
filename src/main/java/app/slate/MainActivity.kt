@@ -60,6 +60,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.platform.LocalFocusManager
 import app.slate.data.App
 import app.slate.data.Categories
 import app.slate.data.Item
@@ -90,6 +94,8 @@ class MainActivity : ComponentActivity(), Actions {
     private var homeSignal by mutableIntStateOf(0)
     private var isDefault by mutableStateOf(false)
     private var gesturesDown by mutableStateOf(false)
+    /** Compose's focus, so we can drop it whenever Slate goes to the background. */
+    private var focusManager: FocusManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -101,6 +107,10 @@ class MainActivity : ComponentActivity(), Actions {
             val prefs by slate.settings.prefs.collectAsState()
             CompositionLocalProvider(LocalIconCache provides slate.icons, LocalIconStyle provides prefs.iconStyle) { Root() }
         }
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, tasksChanged, android.content.IntentFilter(app.slate.service.OpenTasks.ACTION_CHANGED),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         val sp = getSharedPreferences("slate_misc", MODE_PRIVATE)
         if (!sp.getBoolean("asked_default", false) && !checkDefault()) {
             sp.edit { putBoolean("asked_default", true) }
@@ -108,11 +118,26 @@ class MainActivity : ComponentActivity(), Actions {
         }
     }
 
+    /** Recents changed (an app cleared): refresh the dock's recent apps. */
+    private val tasksChanged = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: Intent?) { refreshRecents() }
+    }
+
+    private fun refreshRecents() {
+        val appsNow = slate.apps.apps.value
+        Thread { slate.usage.refreshFromSystem(applicationContext, appsNow) }.start()
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(tasksChanged) }
+        super.onDestroy()
+    }
+
     override fun onResume() {
         super.onResume()
         isDefault = checkDefault()
-        val appsNow = slate.apps.apps.value
-        Thread { slate.usage.refreshFromSystem(applicationContext, appsNow) }.start()
+        refreshRecents()
+        sendBroadcast(Intent(app.slate.service.GestureService.ACTION_HOME_SHOWN).setPackage(packageName))
         gesturesDown = navigationIsGestures() && !app.slate.service.GestureService.isRunning(this)
     }
 
@@ -120,11 +145,25 @@ class MainActivity : ComponentActivity(), Actions {
         super.onNewIntent(intent)
         overlay = Overlay.None
         homeSignal++
+        dropKeyboard()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // A text field (a note, a to-do) that kept focus would bring the keyboard back the moment
+        // you return home. Leave nothing focused behind.
+        dropKeyboard()
+    }
+
+    private fun dropKeyboard() {
+        runCatching { focusManager?.clearFocus(force = true) }
+        WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
     }
 
     @Composable
     private fun Root() {
         val apps by slate.apps.apps.collectAsState()
+        focusManager = LocalFocusManager.current
 
         // First run: build an organised home from what's installed. Afterwards, drop uninstalled apps.
         LaunchedEffect(apps) {
@@ -152,6 +191,7 @@ class MainActivity : ComponentActivity(), Actions {
                     onSystemSettingsAccessibility = { safeStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onUsageAccess = { safeStart(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
                     onResetLayout = { seed(slate.apps.apps.value); overlay = Overlay.None; toast("Home screen rebuilt") },
+                    onOrganize = { organize(); overlay = Overlay.None },
                     onClose = { overlay = Overlay.None },
                 )
             }
@@ -213,8 +253,8 @@ class MainActivity : ComponentActivity(), Actions {
                                 }
                                 if (count > 0) Txt("on home", color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(end = 10.dp))
                                 Chip("Add", strong = true) {
-                                    slate.home.setWidgets(widgets + WidgetSpec(newId(), type))
-                                    toast("${meta.first} added to page 1")
+                                    slate.home.setWidgets(listOf(WidgetSpec(newId(), type)) + widgets)
+                                    onClose()
                                 }
                             }
                         }
@@ -281,8 +321,8 @@ class MainActivity : ComponentActivity(), Actions {
 
     private fun placeAppWidget(id: Int) {
         pendingWidget = null
-        slate.home.setWidgets(slate.home.widgets.value + WidgetSpec(newId(), "app", id))
-        toast("Widget added to page 1")
+        slate.home.setWidgets(listOf(WidgetSpec(newId(), "app", id)) + slate.home.widgets.value)
+        overlay = Overlay.None
     }
 
     @Deprecated("Uses the platform result API for AppWidgetHost compatibility")
@@ -330,6 +370,21 @@ class MainActivity : ComponentActivity(), Actions {
         slate.home.setDock(dock)
     }
 
+    /** Category folders for groups of more than 3 loose apps; smaller groups stay as icons. */
+    private fun organize() {
+        val byKey = slate.apps.apps.value.associateBy { it.key }
+        val prefs = slate.settings.prefs.value
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val cols = if (landscape) prefs.density.landCols else prefs.density.landRows
+        val rows = if (landscape) prefs.density.landRows else prefs.density.landCols
+        val span = prefs.density.widgetSpan
+        val cap: (Int) -> Int = { p ->
+            if (p == 0 && prefs.widgetsOnHome) (if (landscape) (cols - span) * rows else cols * (rows - span)) else cols * rows
+        }
+        val made = slate.home.organize({ k -> byKey[k]?.let { Categories.of(this, it) }?.takeIf { it != Categories.OTHER } }, cap)
+        toast(if (made == 0) "Already organised — no category has more than 3 loose apps" else "Organised into $made folder${if (made == 1) "" else "s"}")
+    }
+
     // ── Actions ──────────────────────────────────────────────────────────
 
     override fun launch(app: App, bounds: Rect?) {
@@ -355,6 +410,12 @@ class MainActivity : ComponentActivity(), Actions {
     override fun openSettings() { overlay = Overlay.Settings }
     override fun openSearch() { overlay = Overlay.Search }
     override fun openWidgets() { overlay = Overlay.Widgets }
+    override fun openRecents() {
+        if (!app.slate.service.GestureService.openRecents(this)) {
+            toast("Turn on Slate gestures to use the Recents button")
+            safeStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+    }
     private fun navigationIsGestures(): Boolean =
         runCatching { Settings.Secure.getInt(contentResolver, "navigation_mode") == 2 }.getOrDefault(false)
 

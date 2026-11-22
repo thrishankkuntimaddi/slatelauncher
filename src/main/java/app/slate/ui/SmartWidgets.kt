@@ -75,7 +75,7 @@ fun StickyWidget(slate: SlateApp, id: String) {
     fun save(a: JSONArray) = slate.widgetData.update(id) { it.put("notes", a) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Txt("STICKY NOTES", color = Color(0xFFFFE27A), size = 12.sp, weight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Txt("STICKY NOTES", color = Color(0xFFFFE27A), size = WType.title, weight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             Txt("+ New", color = Slate.Muted, size = 13.sp, modifier = Modifier.press {
                 notes.put(JSONObject().put("t", "").put("c", notes.length() % STICKY.size)); save(notes)
             }.padding(4.dp))
@@ -136,7 +136,7 @@ fun ScreenTimeWidget(slate: SlateApp) {
             Txt("Allow Usage access in Settings → System to see this.", color = Slate.Muted, size = 14.sp)
             return@Column
         }
-        Txt(fmt(total), size = 36.sp, weight = FontWeight.Light)
+        Txt(fmt(total), size = WType.hero(), weight = FontWeight.Light)
         Spacer(Modifier.height(10.dp))
         val max = data.firstOrNull()?.second ?: 1L
         data.take(4).forEach { (pkg, ms) ->

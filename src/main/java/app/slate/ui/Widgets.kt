@@ -5,7 +5,39 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
+import app.slate.data.WidgetStyle
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,9 +55,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -58,16 +88,134 @@ data class WidgetMetrics(val unit: Dp, val block: Dp, val gap: Dp, val hGap: Dp)
     fun height(rows: Int): Dp = unit * (rows - 1) + block
 }
 
-/** Page 1, landscape: widgets stacked in a column beside the icons. */
+/** The size of the widget being drawn, so its content can adapt (wide timer row, hero text size). */
+val LocalWidgetSize = compositionLocalOf { DpSize(320.dp, 200.dp) }
+
+/** One type scale for every widget: big numbers grow with the card, everything else stays put. */
+object WType {
+    val title = 12.sp
+    val body = 15.sp
+    val small = 13.sp
+    val caption = 12.sp
+
+    /** The big number (time, temperature, days left), sized to the card's height. */
+    @Composable
+    fun hero(): TextUnit {
+        val h = LocalWidgetSize.current.height
+        return when {
+            h < 150.dp -> 34.sp
+            h < 220.dp -> 42.sp
+            h < 320.dp -> 50.sp
+            else -> 58.sp
+        }
+    }
+}
+
+/**
+ * Drives a widget stack like a smart stack: it snaps from one widget to the next, and after
+ * [seconds] of nobody touching it, moves on by itself (wrapping to the top at the end).
+ * It holds still while you touch it, type in it, or edit the home screen.
+ */
+private class StackDriver {
+    var lastTouch by mutableLongStateOf(0L)
+    var focused by mutableStateOf<String?>(null)
+}
+
+@Composable
+private fun rememberStackDriver(
+    state: LazyListState,
+    count: Int,
+    seconds: Int,
+    editing: Boolean,
+    imeOpen: Boolean,
+): StackDriver {
+    val driver = remember { StackDriver() }
+    LaunchedEffect(seconds, editing, count, driver.focused, imeOpen) {
+        if (seconds <= 0 || editing || count < 2 || driver.focused != null || imeOpen) return@LaunchedEffect
+        while (true) {
+            delay(seconds * 1000L)
+            val idle = SystemClock.uptimeMillis() - driver.lastTouch
+            if (state.isScrollInProgress || idle < seconds * 1000L) continue
+            val next = state.firstVisibleItemIndex + 1
+            if (!state.canScrollForward || next >= count) {
+                state.animateScrollToItem(0)
+            } else {
+                val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == next }
+                if (info != null) state.animateScrollBy(info.offset.toFloat(), tween(700, easing = FastOutSlowInEasing))
+                else state.animateScrollToItem(next)
+            }
+        }
+    }
+    return driver
+}
+
+/** Notes every touch on the stack without taking it, so the auto-scroll waits for you. */
+private fun Modifier.touchClock(driver: StackDriver) = pointerInput(driver) {
+    awaitPointerEventScope {
+        while (true) {
+            awaitPointerEvent(PointerEventPass.Initial)
+            driver.lastTouch = SystemClock.uptimeMillis()
+        }
+    }
+}
+
+/** How far the keyboard reaches up into this box, so we can move the content above it. */
+@Composable
+private fun Modifier.keyboardOverlap(onOverlap: (Dp) -> Unit): Modifier {
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val ime = WindowInsets.ime.getBottom(density)
+    var bottom by remember { mutableIntStateOf(0) }
+    val overlap = (ime - (view.height - bottom)).coerceAtLeast(0)
+    onOverlap(with(density) { overlap.toDp() })
+    return onGloballyPositioned { bottom = (it.positionInWindow().y + it.size.height).toInt() }
+}
+
+/** Page 1, landscape: a column of widgets beside the icons, scrolling one widget at a time. */
 @Composable
 fun WidgetStack(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetrics, modifier: Modifier) {
     val widgets by slate.home.widgets.collectAsState()
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(m.gap)) {
-        widgets.forEach { w ->
-            val rows = rowsOf(slate, w, m)
-            WidgetCard(w, slate, actions, editing, rows, Modifier.fillMaxWidth().height(m.height(rows)))
+    val prefs by slate.settings.prefs.collectAsState()
+    val v by slate.widgetData.version.collectAsState()
+    val state = rememberLazyListState()
+    var overlap by remember { mutableStateOf(0.dp) }
+    val driver = rememberStackDriver(state, widgets.size, prefs.widgetRotate, editing, overlap > 0.dp)
+    val gap = m.gap.coerceIn(12.dp, 22.dp)
+
+    // A new widget goes in at the top: show it.
+    var lastFirst by remember { mutableStateOf(widgets.firstOrNull()?.id) }
+    LaunchedEffect(widgets.firstOrNull()?.id) {
+        val first = widgets.firstOrNull()?.id
+        if (first != null && first != lastFirst && widgets.size > 1) state.animateScrollToItem(0)
+        lastFirst = first
+    }
+    // Typing: keep the widget you're typing in in view, above the keyboard.
+    LaunchedEffect(overlap > 0.dp, driver.focused) {
+        val i = widgets.indexOfFirst { it.id == driver.focused }
+        if (overlap > 0.dp && i >= 0) state.animateScrollToItem(i)
+    }
+
+    Box(modifier.keyboardOverlap { overlap = it }) {
+        LazyColumn(
+            Modifier.fillMaxSize().padding(bottom = overlap).touchClock(driver).fadeEdges(),
+            state = state,
+            verticalArrangement = Arrangement.spacedBy(gap),
+            contentPadding = PaddingValues(bottom = 12.dp),
+            flingBehavior = rememberSnapFlingBehavior(state, SnapPosition.Start),
+        ) {
+            items(widgets, key = { it.id }) { w ->
+                val rows = remember(w, v, m) { rowsOf(slate, w, m) }
+                WidgetCard(
+                    w, slate, actions, editing, rows,
+                    Modifier.animateItem(
+                        fadeInSpec = tween(260), fadeOutSpec = tween(180),
+                        placementSpec = spring(0.85f, Spring.StiffnessMediumLow),
+                    ).fillMaxWidth().height(m.height(rows))
+                        .onFocusChanged { f -> if (f.hasFocus) driver.focused = w.id else if (driver.focused == w.id) driver.focused = null },
+                )
+            }
+            if (widgets.isEmpty()) item { EmptyWidgets(actions) }
         }
-        if (widgets.isEmpty()) EmptyWidgets(actions)
     }
 }
 
@@ -75,37 +223,65 @@ fun WidgetStack(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMe
 @Composable
 fun WidgetRow(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetrics, modifier: Modifier) {
     val widgets by slate.home.widgets.collectAsState()
-    BoxWithConstraints(modifier) {
-        val cardW = (maxWidth - m.hGap) / 2
-        if (widgets.size <= 2) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(m.hGap)) {
-                widgets.forEach { w -> WidgetCard(w, slate, actions, editing, 3, Modifier.width(cardW).fillMaxHeight()) }
-                if (widgets.isEmpty()) EmptyWidgets(actions)
+    val prefs by slate.settings.prefs.collectAsState()
+    val v by slate.widgetData.version.collectAsState()
+    val state = rememberLazyListState()
+    var overlap by remember { mutableStateOf(0.dp) }
+    val driver = rememberStackDriver(state, widgets.size, prefs.widgetRotate, editing, overlap > 0.dp)
+    val gap = m.hGap.coerceIn(14.dp, 24.dp)
+    LaunchedEffect(widgets.firstOrNull()?.id) { if (widgets.size > 1) state.animateScrollToItem(0) }
+    BoxWithConstraints(modifier.keyboardOverlap { overlap = it }) {
+        val half = (maxWidth - gap) / 2
+        LazyRow(
+            Modifier.fillMaxSize().touchClock(driver), state = state,
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            flingBehavior = rememberSnapFlingBehavior(state, SnapPosition.Start),
+        ) {
+            items(widgets, key = { it.id }) { w ->
+                // Large widgets take the whole width in portrait.
+                val wide = remember(w, v) { sizeOverride(slate, w) >= 4 }
+                WidgetCard(
+                    w, slate, actions, editing, 3,
+                    Modifier.animateItem(fadeInSpec = tween(260), fadeOutSpec = tween(180))
+                        .width(if (wide) maxWidth else half).fillMaxHeight()
+                        .onFocusChanged { f -> if (f.hasFocus) driver.focused = w.id else if (driver.focused == w.id) driver.focused = null },
+                )
             }
-        } else {
-            val state = rememberLazyListState()
-            LazyRow(
-                Modifier.fillMaxSize(), state = state,
-                horizontalArrangement = Arrangement.spacedBy(m.hGap),
-                flingBehavior = rememberSnapFlingBehavior(state),
-            ) {
-                items(widgets, key = { it.id }) { w -> WidgetCard(w, slate, actions, editing, 3, Modifier.width(cardW).fillMaxHeight()) }
-            }
+            if (widgets.isEmpty()) item { EmptyWidgets(actions) }
         }
     }
 }
 
+/** A soft fade where the stack is cut off, instead of a hard edge. */
+private fun Modifier.fadeEdges() = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val f = 18.dp.toPx().coerceAtMost(size.height / 4)
+        drawRect(
+            Brush.verticalGradient(0f to Color.Transparent, f / size.height to Color.Black, 1f - f / size.height to Color.Black, 1f to Color.Transparent),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+/** Size picked in edit mode (rows tall), or 0 for the widget's natural size. */
+private fun sizeOverride(slate: SlateApp, w: WidgetSpec): Int = slate.widgetData.get(w.id).optInt("_rows", 0)
+
 /** How many icon rows each widget spans. */
-private fun rowsOf(slate: SlateApp, w: WidgetSpec, m: WidgetMetrics): Int = when (w.type) {
-    "battery" -> 1
-    "clock", "notes", "weather", "timer", "world", "countdown", "upnext" -> 2
-    "calendar", "todo", "habits", "sticky", "screentime", "photo" -> 3
-    "app" -> slate.appWidgets.info(w.appWidgetId)?.let { info ->
-        val dp = info.minHeight / slate.resources.displayMetrics.density
-        kotlin.math.ceil(dp / m.unit.value).toInt().coerceIn(1, 4)
-    } ?: 2
-    else -> 2
+private fun rowsOf(slate: SlateApp, w: WidgetSpec, m: WidgetMetrics): Int {
+    sizeOverride(slate, w).takeIf { it > 0 }?.let { return it }
+    return when (w.type) {
+        "battery" -> 1
+        "clock", "weather", "timer", "world", "countdown", "upnext" -> 2
+        "calendar", "todo", "habits", "sticky", "screentime", "photo", "notes" -> 3
+        "app" -> slate.appWidgets.info(w.appWidgetId)?.let { info ->
+            val dp = info.minHeight / slate.resources.displayMetrics.density
+            kotlin.math.ceil(dp / m.unit.value).toInt().coerceIn(1, 4)
+        } ?: 2
+        else -> 2
+    }
 }
+
+private fun sizesFor(type: String) = if (type == "battery") listOf(1 to "S", 2 to "M") else listOf(2 to "S", 3 to "M", 4 to "L")
 
 /** Built-in widgets: type → (name, what it's for). */
 val WIDGET_TYPES = listOf(
@@ -135,36 +311,59 @@ private fun EmptyWidgets(actions: Actions) {
 
 @Composable
 fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boolean, rows: Int, modifier: Modifier) {
-    Box(modifier) {
+    val prefs by slate.settings.prefs.collectAsState()
+    val (fill, edge) = when (prefs.widgetStyle) {
+        WidgetStyle.Frosted -> Slate.Card to Slate.CardEdge
+        WidgetStyle.Dark -> Color(0xE6151519) to Color(0x14FFFFFF)
+        WidgetStyle.Clear -> Color(0x14FFFFFF) to Color(0x26FFFFFF)
+    }
+    val shape = RoundedCornerShape(WIDGET_RADIUS)
+    BoxWithConstraints(modifier) {
+        val size = DpSize(maxWidth, maxHeight)
+        val inner = when {
+            spec.type == "app" || spec.type == "photo" -> 8.dp
+            maxHeight < 150.dp -> 14.dp
+            else -> 18.dp
+        }
         Box(
             Modifier.fillMaxSize()
-                .glass(RoundedCornerShape(WIDGET_RADIUS), Slate.Card)
-                .border(1.dp, Slate.CardEdge, RoundedCornerShape(WIDGET_RADIUS))
-                .padding(if (spec.type == "app" || spec.type == "photo") 8.dp else if (rows == 1) 14.dp else 18.dp),
+                .glass(shape, fill)
+                .border(1.dp, edge, shape)
+                .padding(inner),
         ) {
-            when (spec.type) {
-                "clock" -> ClockWidget()
-                "battery" -> BatteryWidget()
-                "calendar" -> CalendarWidget()
-                "todo" -> TodoWidget(slate, spec.id)
-                "notes" -> NotesWidget(slate, spec.id)
-                "weather" -> WeatherWidget(slate, spec.id)
-                "timer" -> TimerWidget(slate, spec.id)
-                "world" -> WorldClockWidget(slate, spec.id)
-                "countdown" -> CountdownWidget(slate, spec.id)
-                "habits" -> HabitsWidget(slate, spec.id)
-                "app" -> HostedWidget(slate, spec.appWidgetId)
-                "sticky" -> StickyWidget(slate, spec.id)
-                "screentime" -> ScreenTimeWidget(slate)
-                "upnext" -> UpNextWidget()
-                "photo" -> PhotoWidget(slate, spec.id)
+            CompositionLocalProvider(LocalWidgetSize provides DpSize(size.width - inner * 2, size.height - inner * 2)) {
+                when (spec.type) {
+                    "clock" -> ClockWidget()
+                    "battery" -> BatteryWidget()
+                    "calendar" -> CalendarWidget()
+                    "todo" -> TodoWidget(slate, spec.id)
+                    "notes" -> NotesWidget(slate, spec.id)
+                    "weather" -> WeatherWidget(slate, spec.id)
+                    "timer" -> TimerWidget(slate, spec.id)
+                    "world" -> WorldClockWidget(slate, spec.id)
+                    "countdown" -> CountdownWidget(slate, spec.id)
+                    "habits" -> HabitsWidget(slate, spec.id)
+                    "app" -> HostedWidget(slate, spec.appWidgetId)
+                    "sticky" -> StickyWidget(slate, spec.id)
+                    "screentime" -> ScreenTimeWidget(slate)
+                    "upnext" -> UpNextWidget()
+                    "photo" -> PhotoWidget(slate, spec.id)
+                }
             }
         }
-        if (editing) {
-            Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(WIDGET_RADIUS)).background(Color(0xE6141418)),
-                contentAlignment = Alignment.Center,
+        AnimatedVisibility(editing, Modifier.matchParentSize(), enter = fadeIn(tween(160)), exit = fadeOut(tween(140))) {
+            Column(
+                Modifier.fillMaxSize().clip(shape).background(Color(0xE6141418)).padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
             ) {
+                if (spec.type != "app") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        sizesFor(spec.type).forEach { (r, label) ->
+                            Chip(label, strong = r == rows) { slate.widgetData.update(spec.id) { it.put("_rows", r) } }
+                        }
+                    }
+                }
                 Chip("Remove widget") { removeWidget(slate, spec) }
             }
         }
@@ -182,13 +381,14 @@ private fun ClockWidget() {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000 - now % 1000) } }
     val d = Date(now)
+    val hero = WType.hero()
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-        Txt(SimpleDateFormat("EEEE", Locale.getDefault()).format(d).uppercase(), color = Slate.Accent, size = 13.sp, weight = FontWeight.SemiBold)
+        Txt(SimpleDateFormat("EEEE", Locale.getDefault()).format(d).uppercase(), color = Slate.Accent, size = WType.title, weight = FontWeight.SemiBold)
         Txt(
             android.text.format.DateFormat.getTimeFormat(LocalContext.current).format(d),
-            size = 52.sp, weight = FontWeight.Light,
+            size = hero * 1.15f, weight = FontWeight.Light, maxLines = 1,
         )
-        Txt(SimpleDateFormat("d MMMM yyyy", Locale.getDefault()).format(d), color = Slate.Muted, size = 15.sp)
+        Txt(SimpleDateFormat("d MMMM yyyy", Locale.getDefault()).format(d), color = Slate.Muted, size = WType.body)
     }
 }
 
@@ -213,11 +413,11 @@ private fun BatteryWidget() {
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
         Row {
-            Txt("Battery", color = Slate.Muted, size = 13.sp, weight = FontWeight.SemiBold)
-            if (charging) Txt("  · charging", color = Color(0xFF7BE495), size = 13.sp)
+            Txt("BATTERY", color = Color(0xFF7BE495), size = WType.title, weight = FontWeight.SemiBold)
+            if (charging) Txt("  · CHARGING", color = Slate.Muted, size = WType.title)
         }
-        Spacer(Modifier.height(8.dp))
-        Txt(if (level >= 0) "$level%" else "—", size = 34.sp, weight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Txt(if (level >= 0) "$level%" else "—", size = WType.hero(), weight = FontWeight.Light)
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(Slate.GlassLight)) {
             Box(
