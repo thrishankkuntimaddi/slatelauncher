@@ -88,17 +88,25 @@ class GestureService : AccessibilityService() {
     private inner class BottomSwipe : View.OnTouchListener {
         var startY = 0f; var lastMoveAt = 0L; var lastY = 0f
         var vt: VelocityTracker? = null
+        var fired = false
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    startY = e.rawY; lastY = e.rawY; lastMoveAt = SystemClock.uptimeMillis()
+                    startY = e.rawY; lastY = e.rawY; lastMoveAt = SystemClock.uptimeMillis(); fired = false
                     vt?.recycle(); vt = VelocityTracker.obtain().also { it.addMovement(e) }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     vt?.addMovement(e)
                     if (abs(e.rawY - lastY) > 0.5f * d) { lastMoveAt = SystemClock.uptimeMillis(); lastY = e.rawY }
+                    // A quick upward swipe goes Home right away, without waiting for lift-off.
+                    if (!fired) {
+                        vt?.computeCurrentVelocity(1000)
+                        val vy = -(vt?.yVelocity ?: 0f) / d
+                        if ((startY - e.rawY) / d > 36 && vy > 800) { fired = true; performGlobalAction(GLOBAL_ACTION_HOME) }
+                    }
                 }
                 MotionEvent.ACTION_UP -> {
+                    if (fired) { vt?.recycle(); vt = null; return true }
                     vt?.addMovement(e); vt?.computeCurrentVelocity(1000)
                     val vy = -(vt?.yVelocity ?: 0f) / d          // dp/s, upward positive
                     val dy = (startY - e.rawY) / d
@@ -120,21 +128,30 @@ class GestureService : AccessibilityService() {
     private inner class SideSwipe(val fromLeft: Boolean) : View.OnTouchListener {
         var startX = 0f
         var vt: VelocityTracker? = null
+        var fired = false
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             val a = arrow
             val dx = if (fromLeft) e.rawX - startX else startX - e.rawX
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    startX = e.rawX; a?.show(fromLeft, e.rawY, 0f)
+                    startX = e.rawX; fired = false; a?.show(fromLeft, e.rawY, 0f)
                     vt?.recycle(); vt = VelocityTracker.obtain().also { it.addMovement(e) }
                 }
-                MotionEvent.ACTION_MOVE -> { vt?.addMovement(e); a?.show(fromLeft, e.rawY, (dx / (60 * d)).coerceIn(0f, 1f)) }
+                MotionEvent.ACTION_MOVE -> {
+                    vt?.addMovement(e)
+                    if (fired) return true
+                    a?.show(fromLeft, e.rawY, (dx / (60 * d)).coerceIn(0f, 1f))
+                    // Far enough and still moving inward → Back now, not on lift-off.
+                    vt?.computeCurrentVelocity(1000)
+                    val vx = (vt?.xVelocity ?: 0f) / d * (if (fromLeft) 1 else -1)
+                    if (dx / d > 44 && vx > 250) { fired = true; a?.hide(); performGlobalAction(GLOBAL_ACTION_BACK) }
+                }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     a?.hide()
                     vt?.addMovement(e); vt?.computeCurrentVelocity(1000)
                     val vx = (vt?.xVelocity ?: 0f) / d * (if (fromLeft) 1 else -1)
                     val dxDp = dx / d
-                    if (e.actionMasked == MotionEvent.ACTION_UP && (dxDp > 36 || (dxDp > 14 && vx > 600))) {
+                    if (!fired && e.actionMasked == MotionEvent.ACTION_UP && (dxDp > 36 || (dxDp > 14 && vx > 600))) {
                         performGlobalAction(GLOBAL_ACTION_BACK)
                     }
                     vt?.recycle(); vt = null
