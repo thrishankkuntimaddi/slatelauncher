@@ -186,6 +186,27 @@ class HomeStore(context: Context) {
         commit(pages, dropEmpty = true)
     }
 
+    /**
+     * When the grid size changes (density, widgets on/off), re-pack every page so none is left
+     * half-empty. Rotation doesn't trigger this — capacity is the same in both orientations.
+     */
+    fun repackIfCapacityChanged(cap0: Int, cap: Int) {
+        val sig = "$cap0/$cap"
+        if (sp.getString("caps", null) == sig) return
+        sp.edit { putString("caps", sig) }
+        val all = _pages.value.flatMap { it.items }
+        val ids = _pages.value.map { it.id }
+        val out = mutableListOf<Pair<String, List<Item>>>()
+        var i = 0
+        var p = 0
+        do {
+            val c = (if (p == 0) cap0 else cap).coerceAtLeast(1)
+            out += (ids.getOrNull(p) ?: newId()) to all.subList(i, minOf(all.size, i + c))
+            i += c; p++
+        } while (i < all.size)
+        commit(out, dropEmpty = true)
+    }
+
     /** Remove apps that are gone. */
     fun prune(installed: Set<String>) {
         var changed = false

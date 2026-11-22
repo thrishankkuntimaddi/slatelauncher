@@ -7,6 +7,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -62,6 +64,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -75,6 +78,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -143,8 +148,13 @@ private class HomeController(
     val dockSlots = HashMap<String, DockSlot>()
 
     var editMode by mutableStateOf(false)
+    var pressed by mutableStateOf<String?>(null)
+    var haptic: () -> Unit = {}
     var menu by mutableStateOf<Menu?>(null)
     var openFolder by mutableStateOf<String?>(null)
+    var libraryBox by mutableStateOf<Pair<String, List<App>>?>(null)
+    var libraryMenu by mutableStateOf<App?>(null)
+    val sheetOpen get() = openFolder != null || libraryBox != null || libraryMenu != null
 
     // drag
     var candidate by mutableStateOf<Src?>(null)
@@ -181,11 +191,19 @@ private class HomeController(
 
     private fun dockHit(pos: Offset): DockSlot? = dockSlots.values.firstOrNull { it.rect.contains(pos) }
 
+    /** Which icon is under a finger (for the press-down effect). */
+    fun pressTarget(pos: Offset): String? {
+        if (openFolder != null || menu != null || onLibrary) return null
+        dockHit(pos)?.let { return "dock:" + it.key + it.favorite }
+        val hit = gridHit(pos) ?: return null
+        return pages[hit.first].items.getOrNull(hit.second)?.id
+    }
+
     // ── gestures ──
     fun onTap(pos: Offset) {
         if (longPressed) return
         if (menu != null) { menu = null; return }
-        if (openFolder != null || pager.isScrollInProgress || onLibrary) return
+        if (sheetOpen || pager.isScrollInProgress || onLibrary) return
         dockHit(pos)?.let { s -> app(s.key)?.let { actions.launch(it, s.rect) }; return }
         val hit = gridHit(pos)
         val item = hit?.let { (p, i, _) -> pages[p].items.getOrNull(i) }
@@ -198,7 +216,8 @@ private class HomeController(
 
     fun onLongPress(pos: Offset) {
         longPressed = true
-        if (openFolder != null || onLibrary || pager.isScrollInProgress) return
+        if (sheetOpen || onLibrary || pager.isScrollInProgress) return
+        haptic()
         pressStart = pos
         dockHit(pos)?.let { s ->
             candidate = Src.Dock(s.key)
@@ -326,7 +345,7 @@ private class HomeController(
 }
 
 @Composable
-fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
+fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = false) {
     val apps by slate.apps.apps.collectAsState()
     val prefs by slate.settings.prefs.collectAsState()
     val pages by slate.home.pages.collectAsState()
@@ -338,7 +357,9 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState { pages.size + 1 }
     val ctl = remember { HomeController(slate, context, pager, scope) }
+    val hapticFeedback = LocalHapticFeedback.current
     ctl.actions = actions
+    ctl.haptic = { hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress) }
 
     LaunchedEffect(homeSignal) {
         ctl.menu = null; ctl.openFolder = null; ctl.editMode = false
@@ -351,9 +372,11 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
         ctl.folderTarget = null
         if (ctl.mergeCandidate != null) { delay(350); ctl.folderTarget = ctl.mergeCandidate }
     }
-    BackHandler(enabled = ctl.editMode || ctl.menu != null || ctl.openFolder != null) {
+    BackHandler(enabled = ctl.editMode || ctl.menu != null || ctl.sheetOpen) {
         when {
             ctl.menu != null -> ctl.menu = null
+            ctl.libraryMenu != null -> ctl.libraryMenu = null
+            ctl.libraryBox != null -> ctl.libraryBox = null
             ctl.openFolder != null -> ctl.openFolder = null
             else -> ctl.editMode = false
         }
@@ -371,7 +394,15 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
                 )
             }
             .pointerInput(Unit) {
-                detectTapGestures(onPress = { ctl.longPressed = false }, onTap = { ctl.onTap(it) })
+                detectTapGestures(
+                    onPress = { pos ->
+                        ctl.longPressed = false
+                        ctl.pressed = ctl.pressTarget(pos)
+                        tryAwaitRelease()
+                        ctl.pressed = null
+                    },
+                    onTap = { ctl.onTap(it) },
+                )
             }
             .pointerInput(Unit) {
                 var dy = 0f
@@ -390,19 +421,31 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
         val baseRows = if (landscape) prefs.density.landRows else prefs.density.landCols
         val widgetsOn = prefs.widgetsOnHome
         fun gridOf(page: Int): Pair<Int, Int> =
-            if (page == 0 && widgetsOn) { if (landscape) (baseCols - 2) to baseRows else baseCols to (baseRows - 2) }
+            if (page == 0 && widgetsOn) {
+                val span = prefs.density.widgetSpan
+                if (landscape) (baseCols - span) to baseRows else baseCols to (baseRows - span)
+            }
             else baseCols to baseRows
         val cap: (Int) -> Int = { p -> gridOf(p).let { it.first * it.second } }
         ctl.cap = cap
         ctl.widthPx = constraints.maxWidth.toFloat()
         ctl.edgePx = with(density) { 44.dp.toPx() }
         ctl.slopPx = with(density) { 14.dp.toPx() }
-        LaunchedEffect(baseCols, baseRows, widgetsOn) { slate.home.reflow(cap) }
+        val cap0 = cap(0)
+        val capN = cap(1)
+        LaunchedEffect(cap0, capN) { slate.home.repackIfCapacityChanged(cap0, capN) }
 
         // Wallpaper dimming
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = prefs.dim / 100f)))
 
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        val behind = blurred || ctl.sheetOpen || ctl.menu != null
+        val blur by animateDpAsState(if (behind) 26.dp else 0.dp, tween(220), label = "blur")
+        val sink by animateFloatAsState(if (behind) 0.96f else 1f, tween(220), label = "sink")
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding()
+                .graphicsLayer { scaleX = sink; scaleY = sink }
+                .blur(blur),
+        ) {
             EditBar(ctl.editMode, actions, onDone = { ctl.editMode = false })
             HorizontalPager(
                 state = pager,
@@ -414,10 +457,10 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
                 if (p < pages.size) {
                     HomePage(
                         p, pages[p].items, byKey, gridOf(p), landscape, baseCols, baseRows,
-                        p == 0 && widgetsOn, prefs.labels, ctl, slate, actions,
+                        p == 0 && widgetsOn, prefs.density.widgetSpan, prefs.density.iconDp, prefs.labels, ctl, slate, actions,
                     )
                 } else {
-                    Library(slate, actions, landscape, cap)
+                    Library(slate, actions, landscape, onOpenBox = { t, l -> ctl.libraryBox = t to l }, onAppMenu = { ctl.libraryMenu = it })
                 }
             }
             PageDots(pages.size + 1, pager.currentPage)
@@ -461,6 +504,24 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int) {
             val f = id?.let { slate.home.find(it) } as? Item.Folder
             if (f != null) FolderSheet(f, byKey, slate, actions, ctl)
         }
+
+        // App Library box, opened full-size above everything
+        AnimatedVisibility(
+            visible = ctl.libraryBox != null,
+            enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.92f),
+            exit = fadeOut(tween(120)) + scaleOut(targetScale = 0.95f),
+        ) {
+            val b = remember { mutableStateOf(ctl.libraryBox) }.apply { if (ctl.libraryBox != null) value = ctl.libraryBox }.value
+            if (b != null) {
+                AppsSheet(
+                    title = b.first, apps = b.second,
+                    onDismiss = { ctl.libraryBox = null },
+                    onOpen = { actions.launch(it, null) },
+                    onHold = { ctl.libraryMenu = it },
+                )
+            }
+        }
+        ctl.libraryMenu?.let { a -> LibraryAppMenu(a, slate, actions, cap) { ctl.libraryMenu = null } }
     }
 }
 
@@ -499,32 +560,51 @@ private fun HomePage(
     baseCols: Int,
     baseRows: Int,
     withWidgets: Boolean,
+    widgetSpan: Int,
+    iconDp: Int,
     labels: Boolean,
     ctl: HomeController,
     slate: SlateApp,
     actions: Actions,
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 36.dp, vertical = 8.dp)) {
-        val gridMod = Modifier
-        val w = maxWidth
-        val h = maxHeight
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
+        // One set of metrics for the whole page, so widgets line up with the icon rows and columns.
+        val cellW = maxWidth / baseCols
+        val cellH = maxHeight / baseRows
+        val icon = iconFor(cellW, cellH, iconDp, labels)
+        val block = icon + if (labels) LABEL_BLOCK else 0.dp
+        val hInset = (cellW - icon) / 2
+        val vInset = ((cellH - block) / 2).coerceAtLeast(0.dp)
+        val m = WidgetMetrics(unit = cellH, block = block, gap = cellH - block, hGap = cellW - icon)
         if (withWidgets) {
             if (landscape) {
                 Row(Modifier.fillMaxSize()) {
-                    WidgetStack(slate, actions, ctl.editMode, Modifier.width(w * 2 / baseCols).fillMaxHeight().padding(end = 12.dp))
-                    Grid(p, items, byKey, grid, labels, ctl, gridMod.weight(1f).fillMaxHeight())
+                    WidgetStack(
+                        slate, actions, ctl.editMode, m,
+                        Modifier.width(cellW * widgetSpan).fillMaxHeight().padding(start = hInset, end = hInset, top = vInset),
+                    )
+                    Grid(p, items, byKey, grid, icon, labels, ctl, Modifier.weight(1f).fillMaxHeight())
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
-                    WidgetRow(slate, actions, ctl.editMode, Modifier.height(h * 2 / baseRows).fillMaxWidth().padding(bottom = 12.dp))
-                    Grid(p, items, byKey, grid, labels, ctl, gridMod.weight(1f).fillMaxWidth())
+                    WidgetRow(
+                        slate, actions, ctl.editMode, m,
+                        Modifier.height(cellH * widgetSpan).fillMaxWidth().padding(horizontal = hInset, vertical = vInset),
+                    )
+                    Grid(p, items, byKey, grid, icon, labels, ctl, Modifier.weight(1f).fillMaxWidth())
                 }
             }
         } else {
-            Grid(p, items, byKey, grid, labels, ctl, Modifier.fillMaxSize())
+            Grid(p, items, byKey, grid, icon, labels, ctl, Modifier.fillMaxSize())
         }
     }
 }
+
+/** Space under an icon taken by its name. */
+val LABEL_BLOCK = 24.dp
+
+fun iconFor(cellW: Dp, cellH: Dp, capDp: Int, labels: Boolean): Dp =
+    min(min(cellW * 0.62f, (cellH - if (labels) LABEL_BLOCK else 0.dp) * 0.82f), capDp.dp)
 
 @Composable
 private fun Grid(
@@ -532,6 +612,7 @@ private fun Grid(
     items: List<Item>,
     byKey: Map<String, App>,
     grid: Pair<Int, Int>,
+    icon: Dp,
     labels: Boolean,
     ctl: HomeController,
     modifier: Modifier,
@@ -540,7 +621,6 @@ private fun Grid(
     BoxWithConstraints(modifier.onGloballyPositioned { ctl.grids[p] = GridGeo(it.rootRect(), cols, rows) }) {
         val cw = maxWidth / cols
         val ch = maxHeight / rows
-        val icon = min(min(cw, ch * if (labels) 0.78f else 1f) * 0.64f, 104.dp)
         val draggingId = (ctl.candidate as? Src.Home)?.id?.takeIf { ctl.dragging }
         items.forEachIndexed { i, item ->
             key(item.id) {
@@ -552,7 +632,7 @@ private fun Grid(
                     Modifier.offset { off }.size(cw, ch).graphicsLayer { alpha = if (item.id == draggingId) 0f else 1f },
                     contentAlignment = Alignment.Center,
                 ) {
-                    HomeItem(item, byKey, icon, labels, ctl.editMode, ctl.folderTarget == item.id) {
+                    HomeItem(item, byKey, icon, labels, ctl.editMode, ctl.folderTarget == item.id, ctl.pressed == item.id) {
                         ctl.slate.home.remove(item.id)
                     }
                 }
@@ -569,6 +649,7 @@ private fun HomeItem(
     labels: Boolean,
     jiggle: Boolean,
     highlight: Boolean,
+    pressed: Boolean,
     onRemove: () -> Unit,
 ) {
     val label = when (item) {
@@ -582,7 +663,10 @@ private fun HomeItem(
             label = "w",
         ).value
     } else 0f
-    val grow by animateFloatAsState(if (highlight) 1.12f else 1f, label = "grow")
+    val grow by animateFloatAsState(
+        when { highlight -> 1.12f; pressed -> 0.9f; else -> 1f },
+        spring(0.55f, Spring.StiffnessMedium), label = "grow",
+    )
     Box {
         LabeledIcon(
             label, icon, labels,
@@ -667,10 +751,14 @@ private fun DockIcon(app: App, favorite: Boolean, ctl: HomeController, hidden: B
     val slot = (if (favorite) "f:" else "r:") + app.key
     DisposableEffect(slot) { onDispose { ctl.dockSlots.remove(slot) } }
     AppIcon(
-        app, 58.dp,
+        app, 52.dp,
         Modifier
             .onGloballyPositioned { ctl.dockSlots[slot] = DockSlot(app.key, favorite, it.rootRect()) }
-            .graphicsLayer { alpha = if (hidden) 0.25f else 1f },
+            .graphicsLayer {
+                alpha = if (hidden) 0.25f else 1f
+                val sc = if (ctl.pressed == "dock:" + app.key + favorite) 0.9f else 1f
+                scaleX = sc; scaleY = sc
+            },
     )
 }
 
@@ -747,6 +835,78 @@ private fun ContextMenu(
     }
 }
 
+// ── Sheets ───────────────────────────────────────────────────────────────
+
+/** A frosted panel of apps with a title: App Library boxes. */
+@Composable
+private fun AppsSheet(title: String, apps: List<App>, onDismiss: () -> Unit, onOpen: (App) -> Unit, onHold: (App) -> Unit) {
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f))
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.widthIn(max = 720.dp).fillMaxWidth(0.78f)
+                .clickable(remember { MutableInteractionSource() }, null) {},
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Txt(title, size = 30.sp, weight = FontWeight.SemiBold, shadow = true, modifier = Modifier.padding(bottom = 18.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(112.dp),
+                modifier = Modifier
+                    .glass(RoundedCornerShape(36.dp), Color(0xB31C1C22))
+                    .border(1.dp, Slate.CardEdge, RoundedCornerShape(36.dp))
+                    .padding(horizontal = 18.dp, vertical = 22.dp)
+                    .heightIn(max = 540.dp),
+            ) {
+                items(apps, key = { it.key }) { a ->
+                    LabeledIcon(
+                        a.label, 62.dp, true,
+                        Modifier.padding(vertical = 12.dp).press(onLongClick = { onHold(a) }) { onOpen(a); onDismiss() },
+                    ) { AppIcon(a, 62.dp) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryAppMenu(a: App, slate: SlateApp, actions: Actions, cap: (Int) -> Int, onDismiss: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.width(290.dp).shadow(28.dp, RoundedCornerShape(20.dp))
+                .glass(RoundedCornerShape(20.dp), Slate.Sheet).padding(vertical = 8.dp),
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIcon(a, 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Txt(a.label, size = 17.sp, weight = FontWeight.SemiBold, maxLines = 1)
+            }
+            val rows = buildList<Triple<String, Boolean, () -> Unit>> {
+                if (!slate.home.onHome(a.key)) add(Triple("Add to Home Screen", false) {
+                    val pages = slate.home.pages.value
+                    slate.home.insert(Item.AppItem(app.slate.data.newId(), a.key), pages.size - 1, Int.MAX_VALUE, cap)
+                    actions.toast("Added to your home screen")
+                })
+                if (!slate.home.inDock(a.key)) add(Triple("Add to Dock", false) {
+                    if (!slate.home.addToDock(a.key)) actions.toast("The dock is full")
+                })
+                add(Triple("App Info", false) { actions.details(a) })
+                add(Triple("Uninstall", true) { actions.uninstall(a) })
+            }
+            rows.forEach { (t, danger, run) ->
+                Txt(
+                    t, size = 16.sp, color = if (danger) Slate.Danger else Slate.Ink,
+                    modifier = Modifier.fillMaxWidth().press { onDismiss(); run() }.padding(horizontal = 18.dp, vertical = 13.dp),
+                )
+            }
+        }
+    }
+}
+
 // ── Folder sheet ─────────────────────────────────────────────────────────
 
 @Composable
@@ -776,11 +936,13 @@ private fun FolderSheet(f: Item.Folder, byKey: Map<String, App>, slate: SlateApp
             )
             val apps = f.apps.mapNotNull { byKey[it] }
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(120.dp),
+                columns = GridCells.Adaptive(108.dp),
                 modifier = Modifier
-                    .glass(RoundedCornerShape(36.dp), Color(0x8C1E1E24))
-                    .padding(22.dp)
-                    .height(((apps.size + 3) / 4 * 118 + 8).coerceAtMost(480).dp),
+                    .fillMaxWidth()
+                    .glass(RoundedCornerShape(36.dp), Color(0xB31C1C22))
+                    .border(1.dp, Slate.CardEdge, RoundedCornerShape(36.dp))
+                    .padding(horizontal = 18.dp, vertical = 22.dp)
+                    .heightIn(max = 540.dp),
             ) {
                 items(apps, key = { it.key }) { a ->
                     LabeledIcon(

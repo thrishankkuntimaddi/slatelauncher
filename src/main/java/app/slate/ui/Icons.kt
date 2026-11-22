@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -18,6 +19,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -37,10 +39,17 @@ fun AppIcon(app: App, size: Dp, modifier: Modifier = Modifier) {
     val px = with(LocalDensity.current) { size.roundToPx() }
     val bmp by produceState(cache.peek(app, px, style), app.key, px, style) { value = cache.load(app, px, style) }
     val b = bmp
+    val shadow = Modifier.graphicsLayer {
+        shadowElevation = (size.toPx() * 0.09f).coerceAtMost(14f)
+        shape = Squircle
+        clip = false
+        ambientShadowColor = androidx.compose.ui.graphics.Color.Black
+        spotShadowColor = androidx.compose.ui.graphics.Color.Black
+    }
     if (b == null) {
-        Box(modifier.size(size).clip(RoundedCornerShape(size * 0.235f)).background(Slate.GlassLight))
+        Box(modifier.size(size).clip(Squircle).background(Slate.GlassLight))
     } else {
-        Image(b, contentDescription = app.label, modifier = modifier.size(size))
+        Image(b, contentDescription = app.label, modifier = modifier.size(size).then(if (size > 40.dp) shadow else Modifier))
     }
 }
 
@@ -51,7 +60,7 @@ fun FolderIcon(apps: List<App>, size: Dp, modifier: Modifier = Modifier) {
     val gap = size * 0.05f
     val mini = (size - pad * 2 - gap * 2) / 3
     Box(
-        modifier.size(size).clip(RoundedCornerShape(size * 0.235f)).background(Slate.GlassLight).padding(pad),
+        modifier.size(size).clip(Squircle).background(Slate.Card).padding(pad),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(gap)) {
             apps.take(9).chunked(3).forEach { row ->
@@ -75,11 +84,10 @@ fun LabeledIcon(
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         icon()
         if (showLabel) {
-            Spacer(Modifier.size(8.dp))
-            Txt(
-                label, size = 13.5.sp, align = TextAlign.Center, maxLines = 1, shadow = true,
-                modifier = Modifier.width(iconSize + 28.dp),
-            )
+            Spacer(Modifier.size(6.dp))
+            Box(Modifier.height(18.dp).width(iconSize + 30.dp), contentAlignment = Alignment.Center) {
+                Txt(label, size = 12.5.sp, align = TextAlign.Center, maxLines = 1, shadow = true)
+            }
         }
     }
 }

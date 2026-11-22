@@ -1,19 +1,14 @@
 package app.slate.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,26 +29,36 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import app.slate.SlateApp
 import app.slate.data.App
 import app.slate.data.Categories
-import app.slate.data.Item
-import app.slate.data.newId
 
 /**
- * App Library — the last page. Every app, automatically sorted into boxes:
- * Suggestions (what you use most), Recently Added, then categories. Search lists everything A–Z.
+ * App Library — the last page. Every app sorted into boxes: Suggestions (what you use most),
+ * Recently Added, then categories. Each box shows three apps you can open straight away and a
+ * cluster you tap to see the rest. Search lists everything A–Z.
  */
 @Composable
-fun Library(slate: SlateApp, actions: Actions, landscape: Boolean, cap: (Int) -> Int) {
+fun Library(
+    slate: SlateApp,
+    actions: Actions,
+    landscape: Boolean,
+    onOpenBox: (String, List<App>) -> Unit,
+    onAppMenu: (App) -> Unit,
+) {
     val context = LocalContext.current
     val apps by slate.apps.apps.collectAsState()
     val prefs by slate.settings.prefs.collectAsState()
@@ -69,35 +74,24 @@ fun Library(slate: SlateApp, actions: Actions, landscape: Boolean, cap: (Int) ->
         }
     }
     var query by remember { mutableStateOf("") }
-    var openBox by remember { mutableStateOf<Pair<String, List<App>>?>(null) }
-    var menuFor by remember { mutableStateOf<App?>(null) }
 
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 36.dp)) {
-            Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                Box(
-                    Modifier.widthIn(max = 560.dp).fillMaxWidth().glass(RoundedCornerShape(16.dp), Slate.GlassLight)
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
-                ) {
-                    if (query.isEmpty()) Txt("App Library", color = Slate.Muted, size = 16.sp, modifier = Modifier.align(Alignment.Center))
-                    BasicTextField(
-                        value = query, onValueChange = { query = it }, singleLine = true,
-                        textStyle = TextStyle(color = Slate.Ink, fontSize = 16.sp, textAlign = TextAlign.Center),
-                        cursorBrush = SolidColor(Slate.Ink), modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val cols = if (landscape) 5 else 3
+        val gap = if (landscape) 34.dp else 30.dp
+        val box = min((maxWidth - 56.dp - gap * (cols - 1)) / cols, if (landscape) 196.dp else 210.dp)
+        val side = (maxWidth - box * cols - gap * (cols - 1)) / 2
+
+        Column(Modifier.fillMaxSize()) {
+            SearchBar(query, { query = it }, Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp, bottom = 18.dp))
             if (query.isBlank()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(if (landscape) 200.dp else 190.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp, top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    columns = GridCells.Fixed(cols),
+                    contentPadding = PaddingValues(start = side, end = side, bottom = 28.dp),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
                     verticalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
                     items(boxes, key = { it.first }) { (title, list) ->
-                        CategoryBox(title, list, onApp = { actions.launch(it, null) }, onHold = { menuFor = it }) {
-                            openBox = title to list
-                        }
+                        CategoryBox(title, list, box, onApp = { actions.launch(it, null) }, onHold = onAppMenu) { onOpenBox(title, list) }
                     }
                 }
             } else {
@@ -108,79 +102,13 @@ fun Library(slate: SlateApp, actions: Actions, landscape: Boolean, cap: (Int) ->
                 }
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(300.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(horizontal = side, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
                 ) {
-                    items(results, key = { it.key }) { a ->
-                        AppRow(a, onHold = { menuFor = a }) { actions.launch(a, null) }
-                    }
+                    items(results, key = { it.key }) { a -> AppRow(a, onHold = { onAppMenu(a) }) { actions.launch(a, null) } }
                 }
-            }
-        }
-
-        AnimatedVisibility(openBox != null, enter = fadeIn(tween(150)), exit = fadeOut(tween(120))) {
-            val b = remember { mutableStateOf(openBox) }.apply { if (openBox != null) value = openBox }.value
-            if (b != null) {
-                Box(
-                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))
-                        .clickable(remember { MutableInteractionSource() }, null) { openBox = null },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        Modifier.widthIn(max = 720.dp).fillMaxWidth(0.8f)
-                            .clickable(remember { MutableInteractionSource() }, null) {},
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Txt(b.first, size = 28.sp, weight = FontWeight.SemiBold, shadow = true, modifier = Modifier.padding(bottom = 16.dp))
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(118.dp),
-                            modifier = Modifier.glass(RoundedCornerShape(34.dp), Color(0x8C1E1E24)).padding(20.dp)
-                                .height(((b.second.size + 4) / 5 * 116 + 8).coerceAtMost(520).dp),
-                        ) {
-                            items(b.second, key = { it.key }) { a ->
-                                LabeledIcon(
-                                    a.label, 62.dp, true,
-                                    Modifier.padding(vertical = 10.dp).press(onLongClick = { menuFor = a }) { actions.launch(a, null) },
-                                ) { AppIcon(a, 62.dp) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        menuFor?.let { a ->
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))
-                    .clickable(remember { MutableInteractionSource() }, null) { menuFor = null },
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    Modifier.width(280.dp).glass(RoundedCornerShape(20.dp), Slate.Sheet).padding(vertical = 10.dp),
-                ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AppIcon(a, 44.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Txt(a.label, size = 17.sp, weight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                    val onHome = slate.home.onHome(a.key)
-                    val rows = buildList<Pair<String, () -> Unit>> {
-                        if (!onHome) add("Add to Home Screen" to {
-                            val pages = slate.home.pages.value
-                            slate.home.insert(Item.AppItem(newId(), a.key), pages.size - 1, Int.MAX_VALUE, cap)
-                            actions.toast("Added to your home screen")
-                        })
-                        if (!slate.home.inDock(a.key)) add("Add to Dock" to {
-                            if (!slate.home.addToDock(a.key)) actions.toast("The dock is full")
-                        })
-                        add("App Info" to { actions.details(a) })
-                        add("Uninstall" to { actions.uninstall(a) })
-                    }
-                    rows.forEach { (t, run) ->
-                        Txt(
-                            t, size = 16.sp, color = if (t == "Uninstall") Slate.Danger else Slate.Ink,
-                            modifier = Modifier.fillMaxWidth().press { menuFor = null; run() }.padding(horizontal = 18.dp, vertical = 13.dp),
-                        )
-                    }
+                if (results.isEmpty()) {
+                    Txt("No apps match “$query”", color = Slate.Muted, size = 15.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 40.dp))
                 }
             }
         }
@@ -188,27 +116,67 @@ fun Library(slate: SlateApp, actions: Actions, landscape: Boolean, cap: (Int) ->
 }
 
 @Composable
-private fun CategoryBox(title: String, apps: List<App>, onApp: (App) -> Unit, onHold: (App) -> Unit, onOpen: () -> Unit) {
+private fun SearchBar(value: String, onChange: (String) -> Unit, modifier: Modifier) {
+    Row(
+        modifier
+            .widthIn(max = 520.dp).fillMaxWidth(0.6f).height(44.dp)
+            .glass(RoundedCornerShape(14.dp), Slate.Card)
+            .border(1.dp, Slate.CardEdge, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MagnifierGlyph(Slate.Muted, 16.dp)
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) {
+            if (value.isEmpty()) Txt("App Library", color = Slate.Muted, size = 16.sp)
+            BasicTextField(
+                value = value, onValueChange = onChange, singleLine = true,
+                textStyle = TextStyle(color = Slate.Ink, fontSize = 16.sp),
+                cursorBrush = SolidColor(Slate.Ink), modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (value.isNotEmpty()) Txt("Cancel", color = Slate.Accent, size = 15.sp, modifier = Modifier.press { onChange("") })
+    }
+}
+
+@Composable
+fun MagnifierGlyph(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val st = 1.8.dp.toPx()
+        drawCircle(color, w * 0.33f, Offset(w * 0.42f, w * 0.42f), style = Stroke(st))
+        drawLine(color, Offset(w * 0.67f, w * 0.67f), Offset(w * 0.94f, w * 0.94f), st, StrokeCap.Round)
+    }
+}
+
+/** 2×2: three apps to open directly, plus a cluster of the rest. */
+@Composable
+private fun CategoryBox(title: String, apps: List<App>, box: Dp, onApp: (App) -> Unit, onHold: (App) -> Unit, onOpen: () -> Unit) {
+    val pad = box * 0.11f
+    val gap = box * 0.08f
+    val slot = (box - pad * 2 - gap) / 2
+    val big = slot * 0.92f
+    val mini = (slot - gap * 0.6f) / 2 * 0.9f
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(1f).glass(RoundedCornerShape(30.dp), Slate.GlassLight).padding(16.dp),
+            Modifier.size(box)
+                .glass(RoundedCornerShape(box * 0.15f), Slate.Card)
+                .border(1.dp, Slate.CardEdge, RoundedCornerShape(box * 0.15f))
+                .padding(pad),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Slot(apps.getOrNull(0), onApp, onHold, Modifier.weight(1f))
-                    Slot(apps.getOrNull(1), onApp, onHold, Modifier.weight(1f))
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    Slot(apps.getOrNull(0), slot, big, onApp, onHold)
+                    Slot(apps.getOrNull(1), slot, big, onApp, onHold)
                 }
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Slot(apps.getOrNull(2), onApp, onHold, Modifier.weight(1f))
-                    // The fourth corner: a cluster of the rest; tap to see everything.
-                    Box(Modifier.weight(1f).fillMaxSize().press(onClick = onOpen), contentAlignment = Alignment.Center) {
-                        val rest = apps.drop(3).take(4)
-                        if (apps.size == 4) {
-                            AppIcon(apps[3], 64.dp)
-                        } else if (rest.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                rest.chunked(2).forEach { r ->
-                                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { r.forEach { AppIcon(it, 29.dp) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    Slot(apps.getOrNull(2), slot, big, onApp, onHold)
+                    Box(Modifier.size(slot).press(onClick = onOpen), contentAlignment = Alignment.Center) {
+                        when {
+                            apps.size == 4 -> AppIcon(apps[3], big)
+                            apps.size > 4 -> Column(verticalArrangement = Arrangement.spacedBy(gap * 0.6f)) {
+                                apps.drop(3).take(4).chunked(2).forEach { r ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(gap * 0.6f)) { r.forEach { AppIcon(it, mini) } }
                                 }
                             }
                         }
@@ -217,26 +185,26 @@ private fun CategoryBox(title: String, apps: List<App>, onApp: (App) -> Unit, on
             }
         }
         Txt(
-            title, size = 14.sp, weight = FontWeight.Medium, shadow = true, maxLines = 1,
-            modifier = Modifier.padding(top = 8.dp).press(onClick = onOpen),
+            title, size = 13.sp, weight = FontWeight.SemiBold, shadow = true, maxLines = 1, align = TextAlign.Center,
+            modifier = Modifier.width(box).padding(top = 9.dp).press(onClick = onOpen),
         )
     }
 }
 
 @Composable
-private fun Slot(app: App?, onApp: (App) -> Unit, onHold: (App) -> Unit, modifier: Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        if (app != null) AppIcon(app, 64.dp, Modifier.press(onLongClick = { onHold(app) }) { onApp(app) })
+private fun Slot(app: App?, slot: Dp, icon: Dp, onApp: (App) -> Unit, onHold: (App) -> Unit) {
+    Box(Modifier.size(slot), contentAlignment = Alignment.Center) {
+        if (app != null) AppIcon(app, icon, Modifier.press(onLongClick = { onHold(app) }) { onApp(app) })
     }
 }
 
 @Composable
 fun AppRow(app: App, onHold: () -> Unit, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().press(onLongClick = onHold, onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().press(onLongClick = onHold, onClick = onClick).padding(horizontal = 8.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(app, 40.dp)
+        AppIcon(app, 42.dp)
         Spacer(Modifier.size(14.dp))
         Txt(app.label, size = 17.sp, maxLines = 1, shadow = true)
     }

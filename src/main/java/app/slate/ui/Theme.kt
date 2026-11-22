@@ -37,6 +37,24 @@ object Slate {
     val Accent = Color(0xFF8EA2FF)
     val Danger = Color(0xFFFF6B6B)
     val LabelShadow = Shadow(Color(0x99000000), Offset(0f, 1.5f), 4f)
+    /** Frosted cards (widgets, library boxes): light enough to read on any wallpaper. */
+    val Card = Color(0x2BFFFFFF)
+    val CardEdge = Color(0x1FFFFFFF)
+}
+
+/** The same superellipse the icons are cut to, for shadows and tiles. */
+val Squircle: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.GenericShape { size, _ ->
+    val rx = size.width / 2f
+    val ry = size.height / 2f
+    val n = 5.0
+    for (i in 0..96) {
+        val t = 2 * Math.PI * i / 96
+        val c = kotlin.math.cos(t); val s = kotlin.math.sin(t)
+        val x = rx + rx * Math.signum(c) * Math.pow(kotlin.math.abs(c), 2 / n)
+        val y = ry + ry * Math.signum(s) * Math.pow(kotlin.math.abs(s), 2 / n)
+        if (i == 0) moveTo(x.toFloat(), y.toFloat()) else lineTo(x.toFloat(), y.toFloat())
+    }
+    close()
 }
 
 @Composable

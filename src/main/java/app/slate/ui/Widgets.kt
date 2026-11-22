@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,45 +52,59 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Grid metrics shared with the icons so widgets snap to the same rows and gutters. */
+data class WidgetMetrics(val unit: Dp, val block: Dp, val gap: Dp, val hGap: Dp) {
+    /** A widget [rows] tall spans from the top of one icon to the bottom of the label [rows] rows down. */
+    fun height(rows: Int): Dp = unit * (rows - 1) + block
+}
+
 /** Page 1, landscape: widgets stacked in a column beside the icons. */
 @Composable
-fun WidgetStack(slate: SlateApp, actions: Actions, editing: Boolean, modifier: Modifier) {
+fun WidgetStack(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetrics, modifier: Modifier) {
     val widgets by slate.home.widgets.collectAsState()
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        widgets.forEach { w -> WidgetCard(w, slate, actions, editing, Modifier.fillMaxWidth().height(heightOf(slate, w))) }
+    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(m.gap)) {
+        widgets.forEach { w ->
+            val rows = rowsOf(slate, w, m)
+            WidgetCard(w, slate, actions, editing, rows, Modifier.fillMaxWidth().height(m.height(rows)))
+        }
         if (widgets.isEmpty()) EmptyWidgets(actions)
     }
 }
 
-/** Page 1, portrait: widgets in a row above the icons. */
+/** Page 1, portrait: two widgets side by side; swipe sideways for more (snaps to whole cards). */
 @Composable
-fun WidgetRow(slate: SlateApp, actions: Actions, editing: Boolean, modifier: Modifier) {
+fun WidgetRow(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetrics, modifier: Modifier) {
     val widgets by slate.home.widgets.collectAsState()
-    if (widgets.size in 1..3) {
-        Row(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            widgets.forEach { w -> WidgetCard(w, slate, actions, editing, Modifier.weight(1f).fillMaxHeight()) }
-        }
-    } else {
-        LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(widgets, key = { it.id }) { w -> WidgetCard(w, slate, actions, editing, Modifier.width(340.dp).fillMaxHeight()) }
-            if (widgets.isEmpty()) item { EmptyWidgets(actions) }
+    BoxWithConstraints(modifier) {
+        val cardW = (maxWidth - m.hGap) / 2
+        if (widgets.size <= 2) {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(m.hGap)) {
+                widgets.forEach { w -> WidgetCard(w, slate, actions, editing, 3, Modifier.width(cardW).fillMaxHeight()) }
+                if (widgets.isEmpty()) EmptyWidgets(actions)
+            }
+        } else {
+            val state = rememberLazyListState()
+            LazyRow(
+                Modifier.fillMaxSize(), state = state,
+                horizontalArrangement = Arrangement.spacedBy(m.hGap),
+                flingBehavior = rememberSnapFlingBehavior(state),
+            ) {
+                items(widgets, key = { it.id }) { w -> WidgetCard(w, slate, actions, editing, 3, Modifier.width(cardW).fillMaxHeight()) }
+            }
         }
     }
 }
 
-private fun heightOf(slate: SlateApp, w: WidgetSpec): Dp = when (w.type) {
-    "clock" -> 170.dp
-    "battery" -> 118.dp
-    "calendar" -> 290.dp
-    "todo" -> 300.dp
-    "notes" -> 230.dp
-    "weather" -> 215.dp
-    "timer" -> 220.dp
-    "world" -> 235.dp
-    "countdown" -> 200.dp
-    "habits" -> 270.dp
-    "app" -> slate.appWidgets.info(w.appWidgetId)?.let { (it.minHeight / slate.resources.displayMetrics.density).dp.coerceIn(130.dp, 420.dp) } ?: 180.dp
-    else -> 200.dp
+/** How many icon rows each widget spans. */
+private fun rowsOf(slate: SlateApp, w: WidgetSpec, m: WidgetMetrics): Int = when (w.type) {
+    "battery" -> 1
+    "clock", "notes", "weather", "timer", "world", "countdown" -> 2
+    "calendar", "todo", "habits" -> 3
+    "app" -> slate.appWidgets.info(w.appWidgetId)?.let { info ->
+        val dp = info.minHeight / slate.resources.displayMetrics.density
+        kotlin.math.ceil(dp / m.unit.value).toInt().coerceIn(1, 4)
+    } ?: 2
+    else -> 2
 }
 
 /** Built-in widgets: type → (name, what it's for). */
@@ -113,13 +130,13 @@ private fun EmptyWidgets(actions: Actions) {
 }
 
 @Composable
-fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boolean, modifier: Modifier) {
+fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boolean, rows: Int, modifier: Modifier) {
     Box(modifier) {
         Box(
             Modifier.fillMaxSize()
-                .glass(RoundedCornerShape(26.dp), Color(0x2BFFFFFF))
-                .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(26.dp))
-                .padding(if (spec.type == "app") 8.dp else 20.dp),
+                .glass(RoundedCornerShape(WIDGET_RADIUS), Slate.Card)
+                .border(1.dp, Slate.CardEdge, RoundedCornerShape(WIDGET_RADIUS))
+                .padding(if (spec.type == "app") 8.dp else if (rows == 1) 14.dp else 18.dp),
         ) {
             when (spec.type) {
                 "clock" -> ClockWidget()
@@ -137,7 +154,7 @@ fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boo
         }
         if (editing) {
             Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(26.dp)).background(Color.Black.copy(alpha = 0.45f)),
+                Modifier.fillMaxSize().clip(RoundedCornerShape(WIDGET_RADIUS)).background(Color.Black.copy(alpha = 0.45f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Chip("Remove widget") { removeWidget(slate, spec) }
@@ -202,3 +219,5 @@ private fun BatteryWidget() {
         }
     }
 }
+
+val WIDGET_RADIUS = 24.dp
