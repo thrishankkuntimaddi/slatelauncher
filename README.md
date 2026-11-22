@@ -1,5 +1,7 @@
 # Slate
 
+Website: https://thrishankkuntimaddi.github.io/slatelauncher/ · [Privacy](https://thrishankkuntimaddi.github.io/slatelauncher/privacy.html) · [Terms](https://thrishankkuntimaddi.github.io/slatelauncher/terms.html)
+
 An iPadOS-style home screen for Android tablets, built for the Xiaomi Pad 5 (HyperOS).
 
 - Home pages with folders, a dock (favourites, then recently used apps that are still open), and an App Library
@@ -28,3 +30,7 @@ Allow Autostart for Slate so HyperOS doesn't stop the gesture service.
 
 The gesture service only performs Home / Back / Recents and reads the app names on the system
 Recents screen (so the dock can drop apps you've cleared). It reads nothing else.
+
+## Google Play
+
+See [PLAY_STORE.md](PLAY_STORE.md). Build the bundle with `./gradlew :app:bundleRelease`.

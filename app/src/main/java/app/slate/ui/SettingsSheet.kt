@@ -182,7 +182,7 @@ fun SettingsSheet(
                                 }
                                 Action("Tablet settings", onSystemSettings)
                             }
-                            Txt("Slate 0.1", color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(8.dp))
+                            Txt("Slate 0.2", color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(8.dp))
                         }
                     }
                 }
