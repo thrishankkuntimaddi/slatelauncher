@@ -2,6 +2,8 @@ package app.slate
 
 import android.app.ActivityOptions
 import android.app.SearchManager
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -25,7 +27,13 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -67,9 +75,14 @@ import app.slate.ui.SearchOverlay
 import app.slate.ui.SettingsSheet
 import app.slate.ui.Slate
 import app.slate.ui.Txt
+import app.slate.ui.WIDGET_TYPES
+import app.slate.ui.removeWidget
 import app.slate.ui.glass
 
 private enum class Overlay { None, Search, Settings, Widgets }
+
+private const val REQ_BIND = 11
+private const val REQ_CONFIG = 12
 
 class MainActivity : ComponentActivity(), Actions {
     private val slate get() = application as SlateApp
@@ -145,33 +158,126 @@ class MainActivity : ComponentActivity(), Actions {
     @Composable
     private fun WidgetPicker(onClose: () -> Unit) {
         val widgets by slate.home.widgets.collectAsState()
+        val providers = remember { slate.appWidgets.providers() }
+        var tab by remember { mutableStateOf(0) }
         BackHandler { onClose() }
-        val types = listOf("clock" to "Clock & date", "battery" to "Battery")
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
                 .clickable(remember { MutableInteractionSource() }, null) { onClose() },
             contentAlignment = Alignment.Center,
         ) {
             Column(
-                Modifier.widthIn(max = 520.dp).fillMaxWidth(0.6f).glass(RoundedCornerShape(28.dp), Slate.Sheet).padding(26.dp)
+                Modifier.widthIn(max = 760.dp).fillMaxWidth(0.8f).fillMaxHeight(0.82f)
+                    .glass(RoundedCornerShape(28.dp), Slate.Sheet).padding(26.dp)
                     .clickable(remember { MutableInteractionSource() }, null) {},
             ) {
-                Txt("Widgets", size = 26.sp, weight = FontWeight.SemiBold)
-                Spacer(Modifier.height(16.dp))
-                types.forEach { (t, name) ->
-                    val on = widgets.any { it.type == t }
-                    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Txt(name, size = 17.sp, modifier = Modifier.weight(1f))
-                        Chip(if (on) "Remove" else "Add", strong = !on) {
-                            slate.home.setWidgets(if (on) widgets.filter { it.type != t } else widgets + WidgetSpec(newId(), t))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Txt("Widgets", size = 26.sp, weight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Chip("Done", strong = true, onClick = onClose)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Slate widgets", strong = tab == 0) { tab = 0 }
+                    Chip("From your apps", strong = tab == 1) { tab = 1 }
+                    Chip("On home · ${widgets.size}", strong = tab == 2) { tab = 2 }
+                }
+                Spacer(Modifier.height(14.dp))
+                LazyColumn(Modifier.weight(1f)) {
+                    when (tab) {
+                        0 -> items(WIDGET_TYPES, key = { it.first }) { (type, meta) ->
+                            val count = widgets.count { it.type == type }
+                            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Txt(meta.first, size = 17.sp, weight = FontWeight.Medium)
+                                    Txt(meta.second, color = Slate.Muted, size = 13.sp)
+                                }
+                                if (count > 0) Txt("on home", color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(end = 10.dp))
+                                Chip("Add", strong = true) {
+                                    slate.home.setWidgets(widgets + WidgetSpec(newId(), type))
+                                    toast("${meta.first} added to page 1")
+                                }
+                            }
+                        }
+                        1 -> items(providers, key = { it.provider.flattenToString() + it.profile.hashCode() }) { info ->
+                            val appName = runCatching {
+                                packageManager.getApplicationLabel(packageManager.getApplicationInfo(info.provider.packageName, 0)).toString()
+                            }.getOrDefault(info.provider.packageName)
+                            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Txt(info.loadLabel(packageManager), size = 17.sp, weight = FontWeight.Medium, maxLines = 1)
+                                    Txt(appName, color = Slate.Muted, size = 13.sp)
+                                }
+                                Chip("Add", strong = true) { addAppWidget(info) }
+                            }
+                        }
+                        else -> {
+                            if (widgets.isEmpty()) item { Txt("No widgets yet.", color = Slate.Muted) }
+                            itemsIndexed(widgets, key = { _, w -> w.id }) { i, w ->
+                                val name = WIDGET_TYPES.firstOrNull { it.first == w.type }?.second?.first
+                                    ?: slate.appWidgets.info(w.appWidgetId)?.loadLabel(packageManager) ?: "Widget"
+                                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Txt(name, size = 17.sp, modifier = Modifier.weight(1f))
+                                    if (i > 0) Chip("↑") {
+                                        val l = widgets.toMutableList(); l.add(i - 1, l.removeAt(i)); slate.home.setWidgets(l)
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Chip("Remove") { removeWidget(slate, w) }
+                                }
+                            }
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Txt("More widgets are on the way.", color = Slate.Muted, size = 14.sp)
             }
         }
     }
+
+    // ── Android widgets: bind → (configure) → add ───────────────────────
+
+    private var pendingWidget: Pair<Int, AppWidgetProviderInfo>? = null
+
+    private fun addAppWidget(info: AppWidgetProviderInfo) {
+        val id = slate.appWidgets.allocate()
+        pendingWidget = id to info
+        if (slate.appWidgets.bindIfAllowed(id, info)) configureOrAdd(id, info)
+        else {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, info.profile),
+                REQ_BIND,
+            )
+        }
+    }
+
+    private fun configureOrAdd(id: Int, info: AppWidgetProviderInfo) {
+        if (info.configure != null) {
+            runCatching {
+                slate.appWidgets.host.startAppWidgetConfigureActivityForResult(this, id, 0, REQ_CONFIG, null)
+            }.onFailure { placeAppWidget(id) }
+        } else placeAppWidget(id)
+    }
+
+    private fun placeAppWidget(id: Int) {
+        pendingWidget = null
+        slate.home.setWidgets(slate.home.widgets.value + WidgetSpec(newId(), "app", id))
+        toast("Widget added to page 1")
+    }
+
+    @Deprecated("Uses the platform result API for AppWidgetHost compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        val (id, info) = pendingWidget ?: return
+        when (requestCode) {
+            REQ_BIND -> if (resultCode == RESULT_OK) configureOrAdd(id, info) else { slate.appWidgets.delete(id); pendingWidget = null }
+            REQ_CONFIG -> if (resultCode == RESULT_OK) placeAppWidget(id) else { slate.appWidgets.delete(id); pendingWidget = null }
+        }
+    }
+
+    override fun onStart() { super.onStart(); slate.appWidgets.start() }
+    override fun onStop() { super.onStop(); slate.appWidgets.stop() }
 
     /** Dock: the everyday tools. Page 1: popular apps. Page 2+: one folder per category for the rest. */
     private fun seed(apps: List<App>) {

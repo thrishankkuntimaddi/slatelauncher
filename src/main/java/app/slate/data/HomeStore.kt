@@ -321,7 +321,7 @@ class HomeStore(context: Context) {
             val o = arr.getJSONObject(i)
             WidgetSpec(o.getString("id"), o.getString("type"), o.optInt("awid", -1))
         }
-    }.getOrNull() ?: listOf(WidgetSpec(newId(), "clock"), WidgetSpec(newId(), "battery"))
+    }.getOrNull() ?: listOf("clock", "calendar", "todo", "timer", "notes").map { WidgetSpec(newId(), it) }
 
     companion object {
         const val MAX_DOCK = 10

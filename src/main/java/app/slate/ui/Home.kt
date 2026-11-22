@@ -511,12 +511,12 @@ private fun HomePage(
         if (withWidgets) {
             if (landscape) {
                 Row(Modifier.fillMaxSize()) {
-                    WidgetStack(slate, actions, Modifier.width(w * 2 / baseCols).fillMaxHeight().padding(end = 12.dp))
+                    WidgetStack(slate, actions, ctl.editMode, Modifier.width(w * 2 / baseCols).fillMaxHeight().padding(end = 12.dp))
                     Grid(p, items, byKey, grid, labels, ctl, gridMod.weight(1f).fillMaxHeight())
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
-                    WidgetRow(slate, actions, Modifier.height(h * 2 / baseRows).fillMaxWidth().padding(bottom = 12.dp))
+                    WidgetRow(slate, actions, ctl.editMode, Modifier.height(h * 2 / baseRows).fillMaxWidth().padding(bottom = 12.dp))
                     Grid(p, items, byKey, grid, labels, ctl, gridMod.weight(1f).fillMaxWidth())
                 }
             }
