@@ -23,12 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -197,7 +192,7 @@ fun WidgetStack(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMe
 
     Box(modifier.keyboardOverlap { overlap = it }) {
         LazyColumn(
-            Modifier.fillMaxSize().padding(bottom = overlap).touchClock(driver).fadeEdges(),
+            Modifier.fillMaxSize().padding(bottom = overlap).touchClock(driver),
             state = state,
             verticalArrangement = Arrangement.spacedBy(gap),
             contentPadding = PaddingValues(bottom = 12.dp),
@@ -251,17 +246,6 @@ fun WidgetRow(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetr
         }
     }
 }
-
-/** A soft fade where the stack is cut off, instead of a hard edge. */
-private fun Modifier.fadeEdges() = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
-        drawContent()
-        val f = 18.dp.toPx().coerceAtMost(size.height / 4)
-        drawRect(
-            Brush.verticalGradient(0f to Color.Transparent, f / size.height to Color.Black, 1f - f / size.height to Color.Black, 1f to Color.Transparent),
-            blendMode = BlendMode.DstIn,
-        )
-    }
 
 /** Size picked in edit mode (rows tall), or 0 for the widget's natural size. */
 private fun sizeOverride(slate: SlateApp, w: WidgetSpec): Int = slate.widgetData.get(w.id).optInt("_rows", 0)

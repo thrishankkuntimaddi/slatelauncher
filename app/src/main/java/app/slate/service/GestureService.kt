@@ -145,12 +145,8 @@ class GestureService : AccessibilityService() {
                         handler.removeCallbacks(hold)
                         if ((startY - e.rawY) / d > HOLD_MIN_DP) handler.postDelayed(hold, HOLD_MS)
                     }
-                    // A quick upward flick goes Home right away, without waiting for lift-off.
-                    vt?.computeCurrentVelocity(1000)
-                    val vy = -(vt?.yVelocity ?: 0f) / d
-                    if ((startY - e.rawY) / d > 36 && vy > 900) {
-                        fired = true; handler.removeCallbacks(hold); performGlobalAction(GLOBAL_ACTION_HOME)
-                    }
+                    // Home waits for lift-off: a swipe-and-pause starts fast too, so acting on
+                    // speed mid-swipe would go Home before you get the chance to pause.
                 }
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(hold)
@@ -362,7 +358,7 @@ class GestureService : AccessibilityService() {
         const val ACTION_HOME_SHOWN = "app.slate.action.HOME_SHOWN"
         private const val HOLD_MS = 220L
         private const val HOLD_MIN_DP = 50f
-        private const val JITTER_DP = 7f
+        private const val JITTER_DP = 10f
 
         /** Ask the running service to open Recents. Returns false if the service is off. */
         fun openRecents(context: Context): Boolean {
