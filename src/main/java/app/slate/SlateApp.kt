@@ -20,6 +20,8 @@ class SlateApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The gesture service runs in its own tiny process; it needs none of the launcher's data.
+        if (getProcessName().endsWith(":gestures")) return
         apps = AppRepo(this)
         icons = IconCache(this, apps)
         home = HomeStore(this)

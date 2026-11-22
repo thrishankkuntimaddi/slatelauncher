@@ -332,10 +332,11 @@ fun WeatherWidget(slate: SlateApp, id: String) {
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         val times = daily.optJSONArray("time"); val hi = daily.optJSONArray("temperature_2m_max"); val lo = daily.optJSONArray("temperature_2m_min")
-                        for (i in 0 until minOf(4, times?.length() ?: 0)) {
+                        if (times != null && hi != null && lo != null) for (i in 0 until minOf(4, times.length(), hi.length(), lo.length())) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Txt(if (i == 0) "Today" else LocalDate.parse(times!!.getString(i)).format(DateTimeFormatter.ofPattern("EEE")), color = Slate.Muted, size = 12.sp)
-                                Txt("${hi!!.optDouble(i).toInt()}° / ${lo!!.optDouble(i).toInt()}°", size = 13.sp)
+                                val day = runCatching { LocalDate.parse(times.getString(i)).format(DateTimeFormatter.ofPattern("EEE")) }.getOrDefault("")
+                                Txt(if (i == 0) "Today" else day, color = Slate.Muted, size = 12.sp)
+                                Txt("${hi.optDouble(i).toInt()}° / ${lo.optDouble(i).toInt()}°", size = 13.sp)
                             }
                         }
                     }
@@ -561,6 +562,5 @@ fun HostedWidget(slate: SlateApp, appWidgetId: Int) {
         if (slate.appWidgets.info(appWidgetId) == null) {
             Txt("This widget's app was removed.", color = Slate.Muted, size = 14.sp)
         }
-        @Suppress("UNUSED_EXPRESSION") density
     }
 }

@@ -53,7 +53,7 @@ class Usage(context: Context) {
             .filter { it !in skip }
             .mapNotNull { byPkg[it]?.firstOrNull()?.key }
             .distinct().take(12)
-        if (keys.isNotEmpty() && keys != _recents.value) {
+        if (keys.isNotEmpty() && keys != _recents.value) synchronized(this) {
             _recents.value = keys
             sp.edit { putString("recents", keys.joinToString("\n")) }
         }

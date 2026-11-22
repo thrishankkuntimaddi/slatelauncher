@@ -119,7 +119,11 @@ fun SettingsSheet(
                             }
                             Group("Layout") {
                                 Toggle("Widgets on the first page", prefs.widgetsOnHome) { v -> slate.settings.update { it.copy(widgetsOnHome = v) } }
-                                Toggle("Recent apps in the dock", prefs.dockRecents) { v -> slate.settings.update { it.copy(dockRecents = v) } }
+                                Toggle("Recently used apps in the dock", prefs.dockRecents) { v -> slate.settings.update { it.copy(dockRecents = v) } }
+                                Txt(
+                                    "Shows the apps you used last. Android doesn't let launchers see which apps are still open, so these don't disappear when you clear Recents.",
+                                    color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                                )
                                 Action("Rebuild home screen from my apps", onResetLayout)
                             }
                         }

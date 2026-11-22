@@ -61,7 +61,7 @@ class GestureService : AccessibilityService() {
 
         // Bottom edge: swipe up → Home, swipe up and pause → Recents.
         add(View(this).apply { setOnTouchListener(BottomSwipe()) },
-            overlay(WindowManager.LayoutParams.MATCH_PARENT, (22 * d).toInt(), Gravity.BOTTOM))
+            overlay(WindowManager.LayoutParams.MATCH_PARENT, (18 * d).toInt(), Gravity.BOTTOM))
         // Left and right edges: swipe inward → Back.
         add(View(this).apply { setOnTouchListener(SideSwipe(fromLeft = true)) },
             overlay(edgeW, sideH, Gravity.START or Gravity.CENTER_VERTICAL))
@@ -96,15 +96,17 @@ class GestureService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     vt?.addMovement(e)
-                    if (abs(e.rawY - lastY) > 2 * d) { lastMoveAt = SystemClock.uptimeMillis(); lastY = e.rawY }
+                    if (abs(e.rawY - lastY) > 0.5f * d) { lastMoveAt = SystemClock.uptimeMillis(); lastY = e.rawY }
                 }
                 MotionEvent.ACTION_UP -> {
                     vt?.addMovement(e); vt?.computeCurrentVelocity(1000)
                     val vy = -(vt?.yVelocity ?: 0f) / d          // dp/s, upward positive
                     val dy = (startY - e.rawY) / d
-                    val paused = SystemClock.uptimeMillis() - lastMoveAt > 220
+                    // Recents only when the finger has really stopped: nearly no speed at lift-off
+                    // AND no movement for a moment. A slow swipe still means Home.
+                    val still = abs(vy) < 120 && SystemClock.uptimeMillis() - lastMoveAt > 250
                     when {
-                        paused && dy > 60 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+                        dy > 60 && still -> performGlobalAction(GLOBAL_ACTION_RECENTS)
                         dy > 28 || (dy > 12 && vy > 700) -> performGlobalAction(GLOBAL_ACTION_HOME)
                     }
                     vt?.recycle(); vt = null
@@ -183,6 +185,14 @@ class GestureService : AccessibilityService() {
     override fun onDestroy() { detach(); super.onDestroy() }
 
     companion object {
+        /** Enabled in settings AND actually bound by the system right now. */
+        fun isRunning(context: Context): Boolean {
+            val am = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+            val me = ComponentName(context, GestureService::class.java)
+            return am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                .any { it.resolveInfo?.serviceInfo?.let { si -> ComponentName(si.packageName, si.name) } == me }
+        }
+
         fun isEnabled(context: Context): Boolean {
             val me = ComponentName(context, GestureService::class.java)
             val list = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false

@@ -162,7 +162,7 @@ fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boo
         }
         if (editing) {
             Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(WIDGET_RADIUS)).background(Color.Black.copy(alpha = 0.45f)),
+                Modifier.fillMaxSize().clip(RoundedCornerShape(WIDGET_RADIUS)).background(Color(0xE6141418)),
                 contentAlignment = Alignment.Center,
             ) {
                 Chip("Remove widget") { removeWidget(slate, spec) }

@@ -73,14 +73,13 @@ import app.slate.ui.LocalIconCache
 import app.slate.ui.LocalIconStyle
 import app.slate.ui.SearchOverlay
 import app.slate.ui.SettingsSheet
-import app.slate.ui.SplitSheet
 import app.slate.ui.Slate
 import app.slate.ui.Txt
 import app.slate.ui.WIDGET_TYPES
 import app.slate.ui.removeWidget
 import app.slate.ui.glass
 
-private enum class Overlay { None, Search, Settings, Widgets, Split }
+private enum class Overlay { None, Search, Settings, Widgets }
 
 private const val REQ_BIND = 11
 private const val REQ_CONFIG = 12
@@ -90,7 +89,7 @@ class MainActivity : ComponentActivity(), Actions {
     private var overlay by mutableStateOf(Overlay.None)
     private var homeSignal by mutableIntStateOf(0)
     private var isDefault by mutableStateOf(false)
-    private var splitPreselect by mutableStateOf<App?>(null)
+    private var gesturesDown by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -112,7 +111,9 @@ class MainActivity : ComponentActivity(), Actions {
     override fun onResume() {
         super.onResume()
         isDefault = checkDefault()
-        slate.usage.refreshFromSystem(this, slate.apps.apps.value)
+        val appsNow = slate.apps.apps.value
+        Thread { slate.usage.refreshFromSystem(applicationContext, appsNow) }.start()
+        gesturesDown = navigationIsGestures() && !app.slate.service.GestureService.isRunning(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -157,8 +158,19 @@ class MainActivity : ComponentActivity(), Actions {
             AnimatedVisibility(overlay == Overlay.Widgets, enter = fadeIn(tween(160)), exit = fadeOut(tween(120))) {
                 WidgetPicker { overlay = Overlay.None }
             }
-            AnimatedVisibility(overlay == Overlay.Split, enter = fadeIn(tween(160)), exit = fadeOut(tween(120))) {
-                SplitSheet(slate, splitPreselect, onOpen = { overlay = Overlay.None; launchSplit(it) }) { overlay = Overlay.None }
+            if (gesturesDown && overlay == Overlay.None) {
+                Row(
+                    Modifier.align(Alignment.TopCenter).padding(top = 40.dp)
+                        .glass(RoundedCornerShape(50), Color(0xF22A2A31))
+                        .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Txt("Swipe gestures were stopped by HyperOS", size = 14.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Chip("Turn back on", strong = true) { safeStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                    Spacer(Modifier.width(6.dp))
+                    Chip("Allow Autostart") { openAutostart() }
+                }
             }
         }
     }
@@ -343,39 +355,17 @@ class MainActivity : ComponentActivity(), Actions {
     override fun openSettings() { overlay = Overlay.Settings }
     override fun openSearch() { overlay = Overlay.Search }
     override fun openWidgets() { overlay = Overlay.Widgets }
-    override fun openSplit(preselect: App?) { splitPreselect = preselect; overlay = Overlay.Split }
+    private fun navigationIsGestures(): Boolean =
+        runCatching { Settings.Secure.getInt(contentResolver, "navigation_mode") == 2 }.getOrDefault(false)
 
-    /**
-     * Open each app in its own floating window, tiled: 2 → halves, 3 → half + two quarters,
-     * 4 → quarters. HyperOS supports freeform windows; the window mode is requested through the
-     * standard ActivityOptions bundle.
-     */
-    private fun launchSplit(apps: List<App>) {
-        val b = windowManager.currentWindowMetrics.bounds
-        val top = (window.decorView.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 8
-        val bottom = b.bottom - (28 * resources.displayMetrics.density).toInt()
-        val g = (10 * resources.displayMetrics.density).toInt()
-        val l = b.left + g; val r = b.right - g
-        val midX = (l + r) / 2; val midY = (top + bottom) / 2
-        fun rect(a: Int, t: Int, rr: Int, bb: Int) = android.graphics.Rect(a, t, rr, bb)
-        val rects = when (apps.size) {
-            2 -> listOf(rect(l, top, midX - g / 2, bottom), rect(midX + g / 2, top, r, bottom))
-            3 -> listOf(rect(l, top, midX - g / 2, bottom), rect(midX + g / 2, top, r, midY - g / 2), rect(midX + g / 2, midY + g / 2, r, bottom))
-            else -> listOf(
-                rect(l, top, midX - g / 2, midY - g / 2), rect(midX + g / 2, top, r, midY - g / 2),
-                rect(l, midY + g / 2, midX - g / 2, bottom), rect(midX + g / 2, midY + g / 2, r, bottom),
-            )
-        }
-        val handler = android.os.Handler(mainLooper)
-        apps.take(4).forEachIndexed { i, app ->
-            handler.postDelayed({
-                val opts = ActivityOptions.makeBasic().setLaunchBounds(rects[i]).toBundle().apply {
-                    putInt("android.activity.windowingMode", 5) // freeform
-                }
-                if (slate.apps.launch(app, null, opts)) slate.usage.record(app.key)
-            }, i * 450L)
+    /** Xiaomi's Autostart page (falls back to Slate's app info). */
+    private fun openAutostart() {
+        val xiaomi = Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+        if (!safeStart(xiaomi, quiet = true)) {
+            safeStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
         }
     }
+
     override fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private fun checkDefault(): Boolean =
