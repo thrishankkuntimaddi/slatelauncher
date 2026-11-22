@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity(), Actions {
                     onMakeDefault = ::requestDefault,
                     onWallpaper = { safeStart(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Wallpaper")) },
                     onSystemSettings = { safeStart(Intent(Settings.ACTION_SETTINGS)) },
+                    onSystemSettingsAccessibility = { safeStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onResetLayout = { seed(slate.apps.apps.value); overlay = Overlay.None; toast("Home screen rebuilt") },
                     onClose = { overlay = Overlay.None },
                 )

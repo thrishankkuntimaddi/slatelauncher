@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Slate</string>
+    <string name="gesture_service_label">Slate gestures</string>
+    <string name="gesture_service_description">Full-screen gestures while Slate is your home screen: swipe up from the bottom edge for Home, swipe up and pause for Recents, swipe in from either side for Back. It only performs those actions and never reads what is on screen.</string>
 </resources>

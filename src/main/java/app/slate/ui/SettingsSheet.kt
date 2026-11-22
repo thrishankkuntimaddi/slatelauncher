@@ -44,6 +44,7 @@ fun SettingsSheet(
     onMakeDefault: () -> Unit,
     onWallpaper: () -> Unit,
     onSystemSettings: () -> Unit,
+    onSystemSettingsAccessibility: () -> Unit,
     onResetLayout: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -143,6 +144,11 @@ fun SettingsSheet(
                             Group(null) {
                                 if (!isDefault) Action("Make Slate your home screen", onMakeDefault)
                                 else Txt("Slate is your home screen", color = Slate.Muted, size = 16.sp, modifier = Modifier.padding(16.dp))
+                                if (app.slate.service.GestureService.isEnabled(androidx.compose.ui.platform.LocalContext.current)) {
+                                    Txt("Slate gestures are on — swipe up for Home, hold for Recents, swipe from a side for Back", color = Slate.Muted, size = 15.sp, modifier = Modifier.padding(16.dp))
+                                } else {
+                                    Action("Turn on Slate gestures (Accessibility → Slate gestures)", onSystemSettingsAccessibility)
+                                }
                                 Action("Tablet settings", onSystemSettings)
                             }
                             Txt("Slate 0.1 · part of NoLauncher", color = Slate.Faint, size = 13.sp, modifier = Modifier.padding(8.dp))

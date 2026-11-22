@@ -41,5 +41,16 @@
             </intent-filter>
         </activity>
         <receiver android:name=".TimerReceiver" android:exported="false" />
+
+        <service
+            android:name=".service.GestureService"
+            android:exported="false"
+            android:label="@string/gesture_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/gesture_service" />
+        </service>
     </application>
 </manifest>
