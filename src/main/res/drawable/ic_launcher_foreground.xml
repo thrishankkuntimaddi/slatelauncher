@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- a 2x2 grid of soft tiles -->
+    <path android:fillColor="#FFFFFF" android:pathData="M36,36h14a4,4 0 0 1 4,4v10a4,4 0 0 1 -4,4h-14a4,4 0 0 1 -4,-4v-10a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#B8C4FF" android:pathData="M58,36h14a4,4 0 0 1 4,4v10a4,4 0 0 1 -4,4h-14a4,4 0 0 1 -4,-4v-10a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#B8C4FF" android:pathData="M36,58h14a4,4 0 0 1 4,4v10a4,4 0 0 1 -4,4h-14a4,4 0 0 1 -4,-4v-10a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M58,58h14a4,4 0 0 1 4,4v10a4,4 0 0 1 -4,4h-14a4,4 0 0 1 -4,-4v-10a4,4 0 0 1 4,-4z" />
+</vector>
