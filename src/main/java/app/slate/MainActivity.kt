@@ -130,7 +130,7 @@ class MainActivity : ComponentActivity(), Actions {
         }
 
         Box(Modifier.fillMaxSize()) {
-            Home(slate, this@MainActivity, homeSignal)
+            Home(slate, this@MainActivity, homeSignal, blurred = overlay != Overlay.None)
 
             AnimatedVisibility(overlay == Overlay.Search, enter = fadeIn(tween(180)), exit = fadeOut(tween(140))) {
                 SearchOverlay(slate, this@MainActivity) { overlay = Overlay.None }

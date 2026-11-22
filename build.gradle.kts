@@ -63,4 +63,5 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }

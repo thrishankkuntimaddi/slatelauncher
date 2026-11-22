@@ -84,6 +84,15 @@ fun SettingsSheet(
                     Spacer(Modifier.height(20.dp))
                     when (section) {
                         "Appearance" -> {
+                            Group("Icon size") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                    listOf(0.75f to "Smaller", 0.85f to "Small", 1.0f to "Medium", 1.15f to "Large").forEach { (v, name) ->
+                                        Chip(name, strong = kotlin.math.abs(prefs.iconScale - v) < 0.01f) {
+                                            slate.icons.clear(); slate.settings.update { it.copy(iconScale = v) }
+                                        }
+                                    }
+                                }
+                            }
                             Group("Icons") {
                                 Choice("Full colour", prefs.iconStyle == IconStyle.Colour) { slate.icons.clear(); slate.settings.update { it.copy(iconStyle = IconStyle.Colour) } }
                                 Choice("Monochrome", prefs.iconStyle == IconStyle.Mono) { slate.icons.clear(); slate.settings.update { it.copy(iconStyle = IconStyle.Mono) } }

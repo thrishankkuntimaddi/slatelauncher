@@ -40,6 +40,26 @@ class IconCache(context: Context, private val repo: AppRepo) {
 
     fun clear() = cache.evictAll()
 
+    private val shadows = HashMap<Int, ImageBitmap>()
+
+    /**
+     * A soft squircle shadow, rendered once per icon size and reused under every icon —
+     * the look of a real shadow without per-frame shadow work while scrolling.
+     */
+    fun shadow(px: Int): ImageBitmap = shadows.getOrPut(px) {
+        val margin = (px * 0.22f).toInt()
+        val full = px + margin * 2
+        val bmp = Bitmap.createBitmap(full, full, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(110, 0, 0, 0)
+            maskFilter = android.graphics.BlurMaskFilter(px * 0.07f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        c.translate(margin.toFloat(), margin + px * 0.05f)
+        c.drawPath(shape(px), paint)
+        bmp.asImageBitmap()
+    }
+
     private fun id(app: App, px: Int, style: IconStyle) = "${app.key}@$px/${style.name}"
 
     private fun render(app: App, size: Int, style: IconStyle): Bitmap? {

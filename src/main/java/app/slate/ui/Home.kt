@@ -443,8 +443,8 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
         val sink by animateFloatAsState(if (behind) 0.96f else 1f, tween(220), label = "sink")
         Column(
             Modifier.fillMaxSize().statusBarsPadding()
-                .graphicsLayer { scaleX = sink; scaleY = sink }
-                .blur(blur),
+                .then(if (sink < 1f) Modifier.graphicsLayer { scaleX = sink; scaleY = sink } else Modifier)
+                .then(if (blur > 0.dp) Modifier.blur(blur) else Modifier),
         ) {
             EditBar(ctl.editMode, actions, onDone = { ctl.editMode = false })
             HorizontalPager(
@@ -457,7 +457,7 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
                 if (p < pages.size) {
                     HomePage(
                         p, pages[p].items, byKey, gridOf(p), landscape, baseCols, baseRows,
-                        p == 0 && widgetsOn, prefs.density.widgetSpan, prefs.density.iconDp, prefs.labels, ctl, slate, actions,
+                        p == 0 && widgetsOn, prefs.density.widgetSpan, (prefs.density.iconDp * prefs.iconScale).toInt(), prefs.labels, ctl, slate, actions,
                     )
                 } else {
                     Library(slate, actions, landscape, onOpenBox = { t, l -> ctl.libraryBox = t to l }, onAppMenu = { ctl.libraryMenu = it })
@@ -469,6 +469,7 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
                 recents = if (prefs.dockRecents) recents.filter { it !in dockKeys }.mapNotNull { byKey[it] }.take(3) else emptyList(),
                 ctl = ctl,
                 draggingKey = (ctl.candidate as? Src.Dock)?.key?.takeIf { ctl.dragging },
+                iconSize = (54 * prefs.iconScale).dp,
             )
         }
 
@@ -480,7 +481,7 @@ fun Home(slate: SlateApp, actions: Actions, homeSignal: Int, blurred: Boolean = 
                 is Src.Dock -> Item.AppItem("drag", c.key)
                 null -> null
             }
-            val size = 72.dp
+            val size = (64 * prefs.iconScale).dp
             val half = with(density) { (size / 2).toPx() }
             if (dragged != null) {
                 Box(
@@ -722,7 +723,7 @@ private fun PageDots(count: Int, current: Int) {
 }
 
 @Composable
-private fun Dock(favorites: List<App>, recents: List<App>, ctl: HomeController, draggingKey: String?) {
+private fun Dock(favorites: List<App>, recents: List<App>, ctl: HomeController, draggingKey: String?, iconSize: Dp) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp), contentAlignment = Alignment.Center) {
         val glow by animateFloatAsState(if (ctl.overDock) 1f else 0f, label = "dockglow")
         Row(
@@ -737,21 +738,21 @@ private fun Dock(favorites: List<App>, recents: List<App>, ctl: HomeController, 
             if (favorites.isEmpty() && recents.isEmpty()) {
                 Txt("Drag apps here", color = Slate.Muted, size = 14.sp, modifier = Modifier.padding(horizontal = 40.dp, vertical = 18.dp))
             }
-            favorites.forEach { a -> DockIcon(a, true, ctl, a.key == draggingKey) }
+            favorites.forEach { a -> DockIcon(a, true, ctl, a.key == draggingKey, iconSize) }
             if (recents.isNotEmpty()) {
                 Box(Modifier.width(1.dp).height(44.dp).background(Color.White.copy(alpha = 0.25f)))
-                recents.forEach { a -> DockIcon(a, false, ctl, false) }
+                recents.forEach { a -> DockIcon(a, false, ctl, false, iconSize) }
             }
         }
     }
 }
 
 @Composable
-private fun DockIcon(app: App, favorite: Boolean, ctl: HomeController, hidden: Boolean) {
+private fun DockIcon(app: App, favorite: Boolean, ctl: HomeController, hidden: Boolean, size: Dp) {
     val slot = (if (favorite) "f:" else "r:") + app.key
     DisposableEffect(slot) { onDispose { ctl.dockSlots.remove(slot) } }
     AppIcon(
-        app, 52.dp,
+        app, size,
         Modifier
             .onGloballyPositioned { ctl.dockSlots[slot] = DockSlot(app.key, favorite, it.rootRect()) }
             .graphicsLayer {

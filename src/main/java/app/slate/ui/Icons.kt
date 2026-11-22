@@ -19,6 +19,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -39,12 +41,12 @@ fun AppIcon(app: App, size: Dp, modifier: Modifier = Modifier) {
     val px = with(LocalDensity.current) { size.roundToPx() }
     val bmp by produceState(cache.peek(app, px, style), app.key, px, style) { value = cache.load(app, px, style) }
     val b = bmp
-    val shadow = Modifier.graphicsLayer {
-        shadowElevation = (size.toPx() * 0.09f).coerceAtMost(14f)
-        shape = Squircle
-        clip = false
-        ambientShadowColor = androidx.compose.ui.graphics.Color.Black
-        spotShadowColor = androidx.compose.ui.graphics.Color.Black
+    val shadowBmp = remember(px) { if (size > 40.dp) cache.shadow(px) else null }
+    val shadow = Modifier.drawBehind {
+        shadowBmp?.let { sb ->
+            val o = (sb.width - px) / 2f
+            drawImage(sb, topLeft = androidx.compose.ui.geometry.Offset(-o, -o))
+        }
     }
     if (b == null) {
         Box(modifier.size(size).clip(Squircle).background(Slate.GlassLight))

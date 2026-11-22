@@ -26,6 +26,8 @@ data class Prefs(
     val widgetsOnHome: Boolean = true,
     val dockRecents: Boolean = true,
     val hidden: Set<String> = emptySet(),
+    /** Multiplies icon size: 0.75 smaller … 1.15 large. */
+    val iconScale: Float = 0.85f,
 )
 
 class Settings(context: Context) {
@@ -40,6 +42,7 @@ class Settings(context: Context) {
             widgetsOnHome = sp.getBoolean("widgets", true),
             dockRecents = sp.getBoolean("dock_recents", true),
             hidden = sp.getStringSet("hidden", emptySet()).orEmpty().toSet(),
+            iconScale = sp.getFloat("icon_scale", 0.85f),
         )
     )
     val prefs: StateFlow<Prefs> = _prefs.asStateFlow()
@@ -55,6 +58,7 @@ class Settings(context: Context) {
             putBoolean("widgets", p.widgetsOnHome)
             putBoolean("dock_recents", p.dockRecents)
             putStringSet("hidden", p.hidden)
+            putFloat("icon_scale", p.iconScale)
         }
     }
 }

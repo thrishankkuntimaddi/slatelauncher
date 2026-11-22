@@ -25,6 +25,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,13 +67,15 @@ fun Library(
     val prefs by slate.settings.prefs.collectAsState()
     val counts by slate.usage.counts.collectAsState()
     val visible = remember(apps, prefs.hidden) { apps.filter { it.key !in prefs.hidden } }
-    val boxes = remember(visible, counts) {
-        val suggestions = visible.filter { (counts[it.key] ?: 0) > 0 }.sortedByDescending { counts[it.key] ?: 0 }.take(8)
-        val recent = visible.sortedByDescending { it.installed }.take(8)
-        buildList {
-            if (suggestions.size >= 3) add("Suggestions" to suggestions)
-            add("Recently Added" to recent)
-            addAll(Categories.sort(context, visible))
+    val boxes by produceState(emptyList<Pair<String, List<App>>>(), visible, counts) {
+        value = withContext(Dispatchers.Default) {
+            val suggestions = visible.filter { (counts[it.key] ?: 0) > 0 }.sortedByDescending { counts[it.key] ?: 0 }.take(8)
+            val recent = visible.sortedByDescending { it.installed }.take(8)
+            buildList {
+                if (suggestions.size >= 3) add("Suggestions" to suggestions)
+                add("Recently Added" to recent)
+                addAll(Categories.sort(context, visible))
+            }
         }
     }
     var query by remember { mutableStateOf("") }

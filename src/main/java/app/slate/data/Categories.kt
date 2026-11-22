@@ -150,17 +150,20 @@ object Categories {
     )
     const val OTHER = "Other"
 
-    private fun matches(label: String, word: String) =
-        Regex("(^|[^a-z])" + Regex.escape(word)).containsMatchIn(label)
+    /** One compiled pattern per rule (word starts only), built once. */
+    private val patterns: Map<String, Regex> by lazy {
+        rules.associate { r -> r.name to Regex("(^|[^a-z])(" + r.words.joinToString("|") { Regex.escape(it) } + ")") }
+    }
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    fun of(context: Context, app: App): String {
+    fun of(context: Context, app: App): String = cache.getOrPut(app.key + "|" + app.label) {
         val label = app.label.lowercase()
-        val category = runCatching {
-            context.packageManager.getApplicationInfo(app.packageName, 0).category
-        }.getOrDefault(-1)
-        return (rules.firstOrNull { app.packageName in it.packages }
-            ?: rules.firstOrNull { r -> r.words.any { matches(label, it) } }
-            ?: rules.firstOrNull { category in it.categories })?.name ?: OTHER
+        (rules.firstOrNull { app.packageName in it.packages }
+            ?: rules.firstOrNull { r -> r.words.isNotEmpty() && patterns.getValue(r.name).containsMatchIn(label) }
+            ?: run {
+                val category = runCatching { context.packageManager.getApplicationInfo(app.packageName, 0).category }.getOrDefault(-1)
+                rules.firstOrNull { category in it.categories }
+            })?.name ?: OTHER
     }
 
     /** Category name → apps, in display order (empty categories dropped). */
