@@ -45,6 +45,7 @@ fun SettingsSheet(
     onWallpaper: () -> Unit,
     onSystemSettings: () -> Unit,
     onSystemSettingsAccessibility: () -> Unit,
+    onUsageAccess: () -> Unit,
     onResetLayout: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -148,6 +149,9 @@ fun SettingsSheet(
                                     Txt("Slate gestures are on — swipe up for Home, hold for Recents, swipe from a side for Back", color = Slate.Muted, size = 15.sp, modifier = Modifier.padding(16.dp))
                                 } else {
                                     Action("Turn on Slate gestures (Accessibility → Slate gestures)", onSystemSettingsAccessibility)
+                                }
+                                if (!slate.usage.hasSystemAccess(androidx.compose.ui.platform.LocalContext.current)) {
+                                    Action("Show recent apps from everywhere in the dock (Usage access)", onUsageAccess)
                                 }
                                 Action("Tablet settings", onSystemSettings)
                             }

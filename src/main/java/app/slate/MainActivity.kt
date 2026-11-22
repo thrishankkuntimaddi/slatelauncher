@@ -73,13 +73,14 @@ import app.slate.ui.LocalIconCache
 import app.slate.ui.LocalIconStyle
 import app.slate.ui.SearchOverlay
 import app.slate.ui.SettingsSheet
+import app.slate.ui.SplitSheet
 import app.slate.ui.Slate
 import app.slate.ui.Txt
 import app.slate.ui.WIDGET_TYPES
 import app.slate.ui.removeWidget
 import app.slate.ui.glass
 
-private enum class Overlay { None, Search, Settings, Widgets }
+private enum class Overlay { None, Search, Settings, Widgets, Split }
 
 private const val REQ_BIND = 11
 private const val REQ_CONFIG = 12
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity(), Actions {
     private var overlay by mutableStateOf(Overlay.None)
     private var homeSignal by mutableIntStateOf(0)
     private var isDefault by mutableStateOf(false)
+    private var splitPreselect by mutableStateOf<App?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -110,6 +112,7 @@ class MainActivity : ComponentActivity(), Actions {
     override fun onResume() {
         super.onResume()
         isDefault = checkDefault()
+        slate.usage.refreshFromSystem(this, slate.apps.apps.value)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -146,12 +149,16 @@ class MainActivity : ComponentActivity(), Actions {
                     onWallpaper = { safeStart(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Wallpaper")) },
                     onSystemSettings = { safeStart(Intent(Settings.ACTION_SETTINGS)) },
                     onSystemSettingsAccessibility = { safeStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    onUsageAccess = { safeStart(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
                     onResetLayout = { seed(slate.apps.apps.value); overlay = Overlay.None; toast("Home screen rebuilt") },
                     onClose = { overlay = Overlay.None },
                 )
             }
             AnimatedVisibility(overlay == Overlay.Widgets, enter = fadeIn(tween(160)), exit = fadeOut(tween(120))) {
                 WidgetPicker { overlay = Overlay.None }
+            }
+            AnimatedVisibility(overlay == Overlay.Split, enter = fadeIn(tween(160)), exit = fadeOut(tween(120))) {
+                SplitSheet(slate, splitPreselect, onOpen = { overlay = Overlay.None; launchSplit(it) }) { overlay = Overlay.None }
             }
         }
     }
@@ -336,6 +343,39 @@ class MainActivity : ComponentActivity(), Actions {
     override fun openSettings() { overlay = Overlay.Settings }
     override fun openSearch() { overlay = Overlay.Search }
     override fun openWidgets() { overlay = Overlay.Widgets }
+    override fun openSplit(preselect: App?) { splitPreselect = preselect; overlay = Overlay.Split }
+
+    /**
+     * Open each app in its own floating window, tiled: 2 → halves, 3 → half + two quarters,
+     * 4 → quarters. HyperOS supports freeform windows; the window mode is requested through the
+     * standard ActivityOptions bundle.
+     */
+    private fun launchSplit(apps: List<App>) {
+        val b = windowManager.currentWindowMetrics.bounds
+        val top = (window.decorView.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 8
+        val bottom = b.bottom - (28 * resources.displayMetrics.density).toInt()
+        val g = (10 * resources.displayMetrics.density).toInt()
+        val l = b.left + g; val r = b.right - g
+        val midX = (l + r) / 2; val midY = (top + bottom) / 2
+        fun rect(a: Int, t: Int, rr: Int, bb: Int) = android.graphics.Rect(a, t, rr, bb)
+        val rects = when (apps.size) {
+            2 -> listOf(rect(l, top, midX - g / 2, bottom), rect(midX + g / 2, top, r, bottom))
+            3 -> listOf(rect(l, top, midX - g / 2, bottom), rect(midX + g / 2, top, r, midY - g / 2), rect(midX + g / 2, midY + g / 2, r, bottom))
+            else -> listOf(
+                rect(l, top, midX - g / 2, midY - g / 2), rect(midX + g / 2, top, r, midY - g / 2),
+                rect(l, midY + g / 2, midX - g / 2, bottom), rect(midX + g / 2, midY + g / 2, r, bottom),
+            )
+        }
+        val handler = android.os.Handler(mainLooper)
+        apps.take(4).forEachIndexed { i, app ->
+            handler.postDelayed({
+                val opts = ActivityOptions.makeBasic().setLaunchBounds(rects[i]).toBundle().apply {
+                    putInt("android.activity.windowingMode", 5) // freeform
+                }
+                if (slate.apps.launch(app, null, opts)) slate.usage.record(app.key)
+            }, i * 450L)
+        }
+    }
     override fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private fun checkDefault(): Boolean =

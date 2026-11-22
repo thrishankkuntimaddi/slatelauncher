@@ -22,6 +22,43 @@ class Usage(context: Context) {
     )
     val counts: StateFlow<Map<String, Int>> = _counts.asStateFlow()
 
+    /** True once the user allows Usage access, so recents include apps opened from anywhere. */
+    fun hasSystemAccess(context: Context): Boolean {
+        val ops = context.getSystemService(android.app.AppOpsManager::class.java)
+        return ops.unsafeCheckOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName,
+        ) == android.app.AppOpsManager.MODE_ALLOWED
+    }
+
+    /** Rebuild recents from Android's usage history (last 3 days of apps coming to the front). */
+    fun refreshFromSystem(context: Context, apps: List<App>) {
+        if (!hasSystemAccess(context) || apps.isEmpty()) return
+        val usm = context.getSystemService(android.app.usage.UsageStatsManager::class.java)
+        val now = System.currentTimeMillis()
+        val events = runCatching { usm.queryEvents(now - 3L * 24 * 60 * 60_000, now) }.getOrNull() ?: return
+        val e = android.app.usage.UsageEvents.Event()
+        val order = LinkedHashMap<String, Long>()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            if (e.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) order[e.packageName] = e.timeStamp
+        }
+        val byPkg = apps.groupBy { it.packageName }
+        // Launchers, and system apps HyperOS opens on its own (install scans, cleanup).
+        val skip = setOf(
+            context.packageName, "com.miui.home", "app.nolauncher", "com.android.systemui",
+            "com.miui.securitycenter", "com.miui.cleanmaster", "com.miui.cleaner", "com.miui.securityadd",
+            "com.google.android.packageinstaller", "com.android.packageinstaller", "com.lbe.security.miui",
+        )
+        val keys = order.entries.sortedByDescending { it.value }.map { it.key }
+            .filter { it !in skip }
+            .mapNotNull { byPkg[it]?.firstOrNull()?.key }
+            .distinct().take(12)
+        if (keys.isNotEmpty() && keys != _recents.value) {
+            _recents.value = keys
+            sp.edit { putString("recents", keys.joinToString("\n")) }
+        }
+    }
+
     fun record(key: String) {
         _recents.value = (listOf(key) + _recents.value.filter { it != key }).take(12)
         _counts.value = _counts.value + (key to (_counts.value[key] ?: 0) + 1)

@@ -98,8 +98,8 @@ fun WidgetRow(slate: SlateApp, actions: Actions, editing: Boolean, m: WidgetMetr
 /** How many icon rows each widget spans. */
 private fun rowsOf(slate: SlateApp, w: WidgetSpec, m: WidgetMetrics): Int = when (w.type) {
     "battery" -> 1
-    "clock", "notes", "weather", "timer", "world", "countdown" -> 2
-    "calendar", "todo", "habits" -> 3
+    "clock", "notes", "weather", "timer", "world", "countdown", "upnext" -> 2
+    "calendar", "todo", "habits", "sticky", "screentime", "photo" -> 3
     "app" -> slate.appWidgets.info(w.appWidgetId)?.let { info ->
         val dp = info.minHeight / slate.resources.displayMetrics.density
         kotlin.math.ceil(dp / m.unit.value).toInt().coerceIn(1, 4)
@@ -109,6 +109,10 @@ private fun rowsOf(slate: SlateApp, w: WidgetSpec, m: WidgetMetrics): Int = when
 
 /** Built-in widgets: type → (name, what it's for). */
 val WIDGET_TYPES = listOf(
+    "sticky" to ("Sticky notes" to "Colourful notes you can tap and write on"),
+    "upnext" to ("Up next" to "Your next event and how long until it starts"),
+    "screentime" to ("Screen time" to "Today's total and where it went"),
+    "photo" to ("Photo frame" to "A favourite photo on your home screen"),
     "clock" to ("Clock" to "Time and date at a glance"),
     "calendar" to ("Calendar" to "Your events for the week"),
     "todo" to ("To-do" to "Tasks you can tick off"),
@@ -136,7 +140,7 @@ fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boo
             Modifier.fillMaxSize()
                 .glass(RoundedCornerShape(WIDGET_RADIUS), Slate.Card)
                 .border(1.dp, Slate.CardEdge, RoundedCornerShape(WIDGET_RADIUS))
-                .padding(if (spec.type == "app") 8.dp else if (rows == 1) 14.dp else 18.dp),
+                .padding(if (spec.type == "app" || spec.type == "photo") 8.dp else if (rows == 1) 14.dp else 18.dp),
         ) {
             when (spec.type) {
                 "clock" -> ClockWidget()
@@ -150,6 +154,10 @@ fun WidgetCard(spec: WidgetSpec, slate: SlateApp, actions: Actions, editing: Boo
                 "countdown" -> CountdownWidget(slate, spec.id)
                 "habits" -> HabitsWidget(slate, spec.id)
                 "app" -> HostedWidget(slate, spec.appWidgetId)
+                "sticky" -> StickyWidget(slate, spec.id)
+                "screentime" -> ScreenTimeWidget(slate)
+                "upnext" -> UpNextWidget()
+                "photo" -> PhotoWidget(slate, spec.id)
             }
         }
         if (editing) {

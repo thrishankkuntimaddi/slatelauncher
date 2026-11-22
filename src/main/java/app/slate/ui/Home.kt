@@ -108,6 +108,7 @@ interface Actions {
     fun openSettings()
     fun openSearch()
     fun openWidgets()
+    fun openSplit(preselect: App?)
     fun toast(s: String)
 }
 
@@ -735,6 +736,17 @@ private fun Dock(favorites: List<App>, recents: List<App>, ctl: HomeController, 
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Search lives in the dock too.
+            Box(
+                Modifier.size(iconSize).clip(Squircle).background(Color.White.copy(alpha = 0.16f))
+                    .clickable(remember { MutableInteractionSource() }, null) { ctl.actions.openSearch() },
+                contentAlignment = Alignment.Center,
+            ) { MagnifierGlyph(Slate.Ink, iconSize * 0.4f) }
+            Box(
+                Modifier.size(iconSize).clip(Squircle).background(Color.White.copy(alpha = 0.16f))
+                    .clickable(remember { MutableInteractionSource() }, null) { ctl.actions.openSplit(null) },
+                contentAlignment = Alignment.Center,
+            ) { SplitGlyph(Slate.Ink, iconSize * 0.44f) }
             if (favorites.isEmpty() && recents.isEmpty()) {
                 Txt("Drag apps here", color = Slate.Muted, size = 14.sp, modifier = Modifier.padding(horizontal = 40.dp, vertical = 18.dp))
             }
@@ -786,6 +798,7 @@ private fun ContextMenu(
                 if (!slate.home.inDock(item.app)) rows += Row("Add to Dock") {
                     if (slate.home.addToDock(item.app)) slate.home.remove(item.id) else actions.toast("The dock is full")
                 }
+                if (a != null) rows += Row("Open in Split View") { actions.openSplit(a) }
                 rows += Row("Remove from Home") { slate.home.remove(item.id) }
                 rows += Row("Edit Home Screen") { ctl.editMode = true }
                 if (a != null) {
@@ -804,6 +817,7 @@ private fun ContextMenu(
             val a = byKey[s.key]
             if (slate.home.inDock(s.key)) rows += Row("Remove from Dock") { slate.home.removeFromDock(s.key) }
             else rows += Row("Keep in Dock") { if (!slate.home.addToDock(s.key)) actions.toast("The dock is full") }
+            if (a != null) rows += Row("Open in Split View") { actions.openSplit(a) }
             rows += Row("Edit Home Screen") { ctl.editMode = true }
             if (a != null) {
                 rows += Row("App Info") { actions.details(a) }
@@ -960,5 +974,16 @@ private fun FolderSheet(f: Item.Folder, byKey: Map<String, App>, slate: SlateApp
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SplitGlyph(color: Color, size: Dp) {
+    androidx.compose.foundation.Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val st = 1.8.dp.toPx()
+        val r = androidx.compose.ui.geometry.CornerRadius(w * 0.12f)
+        drawRoundRect(color, androidx.compose.ui.geometry.Offset(0f, w * 0.12f), androidx.compose.ui.geometry.Size(w * 0.44f, w * 0.76f), r, style = androidx.compose.ui.graphics.drawscope.Stroke(st))
+        drawRoundRect(color, androidx.compose.ui.geometry.Offset(w * 0.56f, w * 0.12f), androidx.compose.ui.geometry.Size(w * 0.44f, w * 0.76f), r, style = androidx.compose.ui.graphics.drawscope.Stroke(st))
     }
 }

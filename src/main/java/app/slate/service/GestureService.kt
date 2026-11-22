@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -55,12 +56,12 @@ class GestureService : AccessibilityService() {
     private fun attach() {
         detach()
         val screenH = resources.displayMetrics.heightPixels
-        val edgeW = (14 * d).toInt()
+        val edgeW = (18 * d).toInt()
         val sideH = (screenH * 0.68f).toInt()
 
         // Bottom edge: swipe up → Home, swipe up and pause → Recents.
         add(View(this).apply { setOnTouchListener(BottomSwipe()) },
-            overlay(WindowManager.LayoutParams.MATCH_PARENT, (16 * d).toInt(), Gravity.BOTTOM))
+            overlay(WindowManager.LayoutParams.MATCH_PARENT, (22 * d).toInt(), Gravity.BOTTOM))
         // Left and right edges: swipe inward → Back.
         add(View(this).apply { setOnTouchListener(SideSwipe(fromLeft = true)) },
             overlay(edgeW, sideH, Gravity.START or Gravity.CENTER_VERTICAL))
@@ -83,21 +84,32 @@ class GestureService : AccessibilityService() {
         arrow = null
     }
 
+    /** Short swipes and quick flicks both count; a pause at the top means Recents. */
     private inner class BottomSwipe : View.OnTouchListener {
         var startY = 0f; var lastMoveAt = 0L; var lastY = 0f
+        var vt: VelocityTracker? = null
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { startY = e.rawY; lastY = e.rawY; lastMoveAt = SystemClock.uptimeMillis() }
+                MotionEvent.ACTION_DOWN -> {
+                    startY = e.rawY; lastY = e.rawY; lastMoveAt = SystemClock.uptimeMillis()
+                    vt?.recycle(); vt = VelocityTracker.obtain().also { it.addMovement(e) }
+                }
                 MotionEvent.ACTION_MOVE -> {
-                    if (abs(e.rawY - lastY) > 3 * d) { lastMoveAt = SystemClock.uptimeMillis(); lastY = e.rawY }
+                    vt?.addMovement(e)
+                    if (abs(e.rawY - lastY) > 2 * d) { lastMoveAt = SystemClock.uptimeMillis(); lastY = e.rawY }
                 }
                 MotionEvent.ACTION_UP -> {
-                    val dy = startY - e.rawY
-                    if (dy > 48 * d) {
-                        val paused = SystemClock.uptimeMillis() - lastMoveAt > 260
-                        performGlobalAction(if (paused) GLOBAL_ACTION_RECENTS else GLOBAL_ACTION_HOME)
+                    vt?.addMovement(e); vt?.computeCurrentVelocity(1000)
+                    val vy = -(vt?.yVelocity ?: 0f) / d          // dp/s, upward positive
+                    val dy = (startY - e.rawY) / d
+                    val paused = SystemClock.uptimeMillis() - lastMoveAt > 220
+                    when {
+                        paused && dy > 60 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+                        dy > 28 || (dy > 12 && vy > 700) -> performGlobalAction(GLOBAL_ACTION_HOME)
                     }
+                    vt?.recycle(); vt = null
                 }
+                MotionEvent.ACTION_CANCEL -> { vt?.recycle(); vt = null }
             }
             return true
         }
@@ -105,15 +117,25 @@ class GestureService : AccessibilityService() {
 
     private inner class SideSwipe(val fromLeft: Boolean) : View.OnTouchListener {
         var startX = 0f
+        var vt: VelocityTracker? = null
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             val a = arrow
             val dx = if (fromLeft) e.rawX - startX else startX - e.rawX
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { startX = e.rawX; a?.show(fromLeft, e.rawY, 0f) }
-                MotionEvent.ACTION_MOVE -> a?.show(fromLeft, e.rawY, (dx / (90 * d)).coerceIn(0f, 1f))
+                MotionEvent.ACTION_DOWN -> {
+                    startX = e.rawX; a?.show(fromLeft, e.rawY, 0f)
+                    vt?.recycle(); vt = VelocityTracker.obtain().also { it.addMovement(e) }
+                }
+                MotionEvent.ACTION_MOVE -> { vt?.addMovement(e); a?.show(fromLeft, e.rawY, (dx / (60 * d)).coerceIn(0f, 1f)) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     a?.hide()
-                    if (e.actionMasked == MotionEvent.ACTION_UP && dx > 56 * d) performGlobalAction(GLOBAL_ACTION_BACK)
+                    vt?.addMovement(e); vt?.computeCurrentVelocity(1000)
+                    val vx = (vt?.xVelocity ?: 0f) / d * (if (fromLeft) 1 else -1)
+                    val dxDp = dx / d
+                    if (e.actionMasked == MotionEvent.ACTION_UP && (dxDp > 36 || (dxDp > 14 && vx > 600))) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                    }
+                    vt?.recycle(); vt = null
                 }
             }
             return true
